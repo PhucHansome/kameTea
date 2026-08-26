@@ -1,0 +1,6 @@
+{
+  "name": "KAME POS - Ốc, Ăn Vặt & Trà Sữa",
+  "description": "Hệ thống Quản lý & Bán hàng POS, HRM Chấm công Ca kíp Lương, In Bill QR Sacombank và Báo cáo Doanh thu cho quán KAME",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
