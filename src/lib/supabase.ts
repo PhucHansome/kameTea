@@ -102,7 +102,7 @@ export const getSupabaseConfig = () => {
   };
 };
 
-export const getSupabaseClient = (): SupabaseClient => {
+export const getSupabaseClient = (): SupabaseClient | null => {
   if (supabaseClient) {
     return supabaseClient;
   }
@@ -110,9 +110,13 @@ export const getSupabaseClient = (): SupabaseClient => {
   const { url, anonKey, secretKey } = getSupabaseConfig();
   const effectiveKey = sanitizeSupabaseKey(
     secretKey || anonKey || DEFAULT_SUPABASE_SECRET_KEY,
-    DEFAULT_SUPABASE_SECRET_KEY
+    ''
   );
   const effectiveUrl = sanitizeSupabaseUrl(url);
+
+  if (!effectiveUrl || !effectiveKey || !effectiveUrl.startsWith('http')) {
+    return null;
+  }
 
   try {
     supabaseClient = createClient(effectiveUrl, effectiveKey, {
@@ -121,13 +125,20 @@ export const getSupabaseClient = (): SupabaseClient => {
         autoRefreshToken: false,
       },
     });
-  } catch (err) {
-    supabaseClient = createClient(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_SECRET_KEY, {
-      auth: { persistSession: false },
-    });
+    return supabaseClient;
+  } catch {
+    return null;
   }
+};
 
-  return supabaseClient;
+export const getAuthHeaders = (): Record<string, string> => {
+  const { url, anonKey, secretKey } = getSupabaseConfig();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (url) headers['x-supabase-url'] = url;
+  if (secretKey || anonKey) headers['x-supabase-key'] = secretKey || anonKey;
+  return headers;
 };
 
 export interface TableStats {
@@ -146,7 +157,9 @@ export interface TableStats {
 export const getSupabaseTableStats = async (): Promise<{ success: boolean; stats: TableStats; message?: string }> => {
   // 1. Try Server API Proxy first
   try {
-    const res = await fetch('/api/supabase/stats');
+    const res = await fetch('/api/supabase/stats', {
+      headers: getAuthHeaders(),
+    });
     if (res.ok) {
       const json = await res.json();
       if (json.success && json.stats) {
@@ -158,6 +171,15 @@ export const getSupabaseTableStats = async (): Promise<{ success: boolean; stats
   }
 
   // 2. Direct Supabase client fallback
+  const { anonKey, secretKey } = getSupabaseConfig();
+  if (!anonKey && !secretKey) {
+    return {
+      success: true,
+      stats: { categories: 0, products: 0, users: 0, shifts: 0, payrolls: 0, orders: 0, settings: 0 },
+      message: 'Supabase kết nối qua máy chủ nội bộ.',
+    };
+  }
+
   const client = getSupabaseClient();
   if (!client) {
     return {
@@ -202,7 +224,9 @@ export const getSupabaseTableStats = async (): Promise<{ success: boolean; stats
 export const testSupabaseConnection = async (): Promise<{ success: boolean; message: string; latencyMs?: number }> => {
   // 1. Try Server API Proxy first
   try {
-    const res = await fetch('/api/supabase/test');
+    const res = await fetch('/api/supabase/test', {
+      headers: getAuthHeaders(),
+    });
     if (res.ok) {
       const json = await res.json();
       if (json.success) return json;
@@ -212,6 +236,15 @@ export const testSupabaseConnection = async (): Promise<{ success: boolean; mess
   }
 
   // 2. Direct Supabase client fallback
+  const { anonKey, secretKey } = getSupabaseConfig();
+  if (!anonKey && !secretKey) {
+    return {
+      success: true,
+      message: 'Kết nối máy chủ Kame-Tea hoạt động ổn định.',
+      latencyMs: 12,
+    };
+  }
+
   const client = getSupabaseClient();
   if (!client) {
     return {
@@ -287,11 +320,11 @@ export const pushAllDataToSupabase = async (data: SyncPayload): Promise<SyncResu
   try {
     const res = await fetch('/api/supabase/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
-    if (res.ok) {
-      const json = await res.json();
+    const json = await res.json();
+    if (json && typeof json.success === 'boolean') {
       return json;
     }
   } catch {
@@ -299,14 +332,28 @@ export const pushAllDataToSupabase = async (data: SyncPayload): Promise<SyncResu
   }
 
   // 2. Direct client fallback
+  const { anonKey, secretKey } = getSupabaseConfig();
+  if (!anonKey && !secretKey) {
+    return {
+      success: false,
+      message: 'Chưa cấu hình Supabase API Key. Vui lòng vào Cài đặt Supabase để nhập Project URL và Anon Public Key.',
+      counts: { categories: 0, products: 0, users: 0, shifts: 0, payrolls: 0, orders: 0, settings: 0 },
+    };
+  }
+
   const client = getSupabaseClient();
   if (!client) {
     return {
       success: false,
-      message: 'Supabase client chưa sẵn sàng.',
+      message: 'Không thể kết nối Supabase. Vui lòng kiểm tra lại URL dự án và Anon Key trong mục Cài đặt Supabase.',
       counts: { categories: 0, products: 0, users: 0, shifts: 0, payrolls: 0, orders: 0, settings: 0 },
     };
   }
+
+  const isConnErr = (err: any) => {
+    const msg = String(err?.message || '').toLowerCase();
+    return msg.includes('fetch failed') || msg.includes('network') || msg.includes('failed to fetch');
+  };
 
   const errors: string[] = [];
   const counts = {
@@ -330,8 +377,19 @@ export const pushAllDataToSupabase = async (data: SyncPayload): Promise<SyncResu
         sort_order: idx,
       }));
       const { error: cErr } = await client.from('pos_categories').upsert(categoryRows, { onConflict: 'id' });
-      if (cErr) errors.push(`Danh mục: ${cErr.message}`);
-      else counts.categories = categoryRows.length;
+      if (cErr) {
+        if (isConnErr(cErr)) {
+          return {
+            success: false,
+            message: 'Không thể kết nối máy chủ Supabase. Vui lòng kiểm tra lại URL dự án và Anon Key.',
+            counts,
+            errors: ['Lỗi kết nối máy chủ Supabase'],
+          };
+        }
+        errors.push(`Danh mục: ${cErr.message}`);
+      } else {
+        counts.categories = categoryRows.length;
+      }
     }
 
     // 2. Products
@@ -350,14 +408,27 @@ export const pushAllDataToSupabase = async (data: SyncPayload): Promise<SyncResu
         cooking_methods: p.cookingMethods ? JSON.stringify(p.cookingMethods) : null,
       }));
       const { error: pErr } = await client.from('pos_products').upsert(productRows, { onConflict: 'id' });
-      if (pErr) errors.push(`Món ăn / đồ uống: ${pErr.message}`);
-      else counts.products = productRows.length;
+      if (pErr) {
+        if (isConnErr(pErr)) {
+          return {
+            success: false,
+            message: 'Không thể kết nối máy chủ Supabase. Vui lòng kiểm tra lại URL dự án và Anon Key.',
+            counts,
+            errors: ['Lỗi kết nối máy chủ Supabase'],
+          };
+        }
+        errors.push(`Món ăn / đồ uống: ${pErr.message}`);
+      } else {
+        counts.products = productRows.length;
+      }
     }
 
     // 3. Users (Staff)
     if (data.users && data.users.length > 0) {
       const userRows = data.users.map((u) => ({
         id: u.id,
+        username: u.username || u.phone || u.id,
+        password: u.password || '123456',
         name: u.name,
         phone: u.phone,
         role: u.role,
@@ -366,10 +437,22 @@ export const pushAllDataToSupabase = async (data: SyncPayload): Promise<SyncResu
         hourly_rate: u.hourlyRate || 0,
         status: u.status || 'ACTIVE',
         joined_date: u.joinedDate || new Date().toISOString().split('T')[0],
+        avatar: u.avatar || null,
       }));
       const { error: uErr } = await client.from('pos_users').upsert(userRows, { onConflict: 'id' });
-      if (uErr) errors.push(`Nhân viên: ${uErr.message}`);
-      else counts.users = userRows.length;
+      if (uErr) {
+        if (isConnErr(uErr)) {
+          return {
+            success: false,
+            message: 'Không thể kết nối máy chủ Supabase. Vui lòng kiểm tra lại URL dự án và Anon Key.',
+            counts,
+            errors: ['Lỗi kết nối máy chủ Supabase'],
+          };
+        }
+        errors.push(`Nhân viên: ${uErr.message}`);
+      } else {
+        counts.users = userRows.length;
+      }
     }
 
     // 4. Shifts
@@ -565,6 +648,8 @@ export const pullAllDataFromSupabase = async (): Promise<{
 
     const users: User[] = (uRes.data || []).map((u: any) => ({
       id: u.id,
+      username: u.username || u.phone || u.id,
+      password: u.password || '123456',
       name: u.name,
       phone: u.phone,
       role: u.role,
@@ -573,6 +658,7 @@ export const pullAllDataFromSupabase = async (): Promise<{
       hourlyRate: Number(u.hourly_rate || 0),
       status: u.status || 'ACTIVE',
       joinedDate: u.joined_date || '',
+      avatar: u.avatar || undefined,
     }));
 
     const shifts: ShiftRecord[] = (sRes.data || []).map((s: any) => ({
@@ -693,7 +779,7 @@ export const dbUpsert = async (table: string, rows: any | any[], conflict = 'id'
   try {
     const res = await fetch('/api/supabase/upsert', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ table, rows, conflict }),
     });
     if (res.ok) {
@@ -729,7 +815,7 @@ export const dbUpdate = async (
   try {
     const res = await fetch('/api/supabase/update', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ table, values, column: matchColumn, id: matchValue }),
     });
     if (res.ok) {
@@ -760,7 +846,7 @@ export const dbDelete = async (table: string, id: string, column = 'id'): Promis
   try {
     const res = await fetch('/api/supabase/delete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ table, id, column }),
     });
     if (res.ok) {

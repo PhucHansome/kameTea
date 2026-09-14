@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { User, ShiftRecord, PayrollRecord, UserRole, SalaryCalculationType } from '../../types/pos';
 import { AttendanceCalendar } from './AttendanceCalendar';
@@ -48,6 +48,7 @@ export const HRMView: React.FC = () => {
     updatePayrollRecord,
     settings,
     isSubmitting,
+    isAdmin,
   } = usePOS();
 
   const [activeSubTab, setActiveSubTab] = useState<'STAFF' | 'TIMEKEEPING' | 'PAYROLL'>('STAFF');
@@ -56,8 +57,15 @@ export const HRMView: React.FC = () => {
   const [staffSearchQuery, setStaffSearchQuery] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'OFF' | 'RESIGNED'>('ALL');
 
-  // Filter out ADMIN (Chủ quản) so only staff/employees are displayed in HRM management
-  const staffUsers = users.filter((u) => u.role !== 'ADMIN');
+  // If staff/server attempts to open payroll tab, fallback to staff list
+  useEffect(() => {
+    if (!isAdmin && activeSubTab === 'PAYROLL') {
+      setActiveSubTab('STAFF');
+    }
+  }, [isAdmin, activeSubTab]);
+
+  // In HRM management, show all users including Admin so staff can see owner phone number
+  const staffUsers = users;
 
   // Staff modal state
   const [showUserModal, setShowUserModal] = useState<boolean>(false);
@@ -399,37 +407,40 @@ export const HRMView: React.FC = () => {
             <span>2. Chấm Công Lịch</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveSubTab('PAYROLL')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              activeSubTab === 'PAYROLL'
-                ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            <Calculator className="w-3.5 h-3.5" />
-            <span>3. Bảng Tính Lương & Thưởng</span>
-          </button>
+          {/* Admin only subtab */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('PAYROLL')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                activeSubTab === 'PAYROLL'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Calculator className="w-3.5 h-3.5" />
+              <span>3. Bảng Tính Lương & Thưởng</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* ========================================================================= */}
-      {/* SUB-TAB 1: STAFF LIST (No avatar requirement, Full Add/Edit/Delete) */}
+      {/* SUB-TAB 1: STAFF LIST (RECORD-BY-RECORD ROW TABLE) */}
       {/* ========================================================================= */}
       {activeSubTab === 'STAFF' && (
         <div className="space-y-4">
           {/* Action Bar */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white dark:bg-[#241812] p-3.5 rounded-2xl border border-slate-200 dark:border-[#3D2B1F] shadow-xs">
             <div className="flex items-center gap-2 flex-1 max-w-md">
               <div className="relative w-full">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-[#A89080]" />
                 <input
                   type="text"
-                  placeholder="Tìm theo tên nhân viên, số điện thoại..."
+                  placeholder="Tìm theo tên nhân viên, chủ quán, số điện thoại..."
                   value={staffSearchQuery}
                   onChange={(e) => setStaffSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white outline-hidden focus:ring-2 focus:ring-amber-500"
+                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-[#473225] bg-slate-50 dark:bg-[#35251C] text-xs text-slate-900 dark:text-[#FFFDF9] outline-hidden focus:ring-2 focus:ring-amber-500 placeholder-slate-400 dark:placeholder-[#A89080]"
                 />
               </div>
             </div>
@@ -438,7 +449,7 @@ export const HRMView: React.FC = () => {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200"
+                className="px-3 py-2 rounded-xl border border-slate-200 dark:border-[#473225] bg-slate-50 dark:bg-[#35251C] text-xs font-bold text-slate-700 dark:text-[#EFE4D6]"
               >
                 <option value="ALL">Tất cả trạng thái ({staffUsers.length})</option>
                 <option value="ACTIVE">Đang làm việc</option>
@@ -446,140 +457,197 @@ export const HRMView: React.FC = () => {
                 <option value="RESIGNED">Đã nghỉ việc</option>
               </select>
 
-              <button
-                type="button"
-                onClick={openNewUserModal}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Thêm nhân viên mới</span>
-              </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={openNewUserModal}
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Thêm nhân viên mới</span>
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Staff Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredStaff.map((user) => {
-              const initials = user.name
-                .split(' ')
-                .filter(Boolean)
-                .slice(-2)
-                .map((w) => w[0])
-                .join('')
-                .toUpperCase();
+          {/* Record-by-Record Staff Table (Dạng bảng từng dòng một) */}
+          <div className="bg-white dark:bg-[#241812] rounded-3xl border border-slate-200 dark:border-[#3D2B1F] overflow-hidden shadow-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 dark:bg-[#35251C] text-slate-600 dark:text-[#E8C5A5] font-black border-b border-slate-200 dark:border-[#3D2B1F]">
+                  <tr>
+                    <th className="p-3.5">Họ và tên / Tài khoản</th>
+                    <th className="p-3.5">Số điện thoại liên hệ</th>
+                    <th className="p-3.5">Vị trí & Phân quyền</th>
+                    <th className="p-3.5">Chế độ lương & Định mức</th>
+                    <th className="p-3.5 text-center">Trạng thái</th>
+                    <th className="p-3.5 text-center">Ngày vào làm</th>
+                    <th className="p-3.5 text-right">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-[#3D2B1F]">
+                  {filteredStaff.map((user) => {
+                    const isOwnerAdmin = user.role === 'ADMIN';
+                    const initials = user.name
+                      .split(' ')
+                      .filter(Boolean)
+                      .slice(-2)
+                      .map((w) => w[0])
+                      .join('')
+                      .toUpperCase();
 
-              return (
-                <div
-                  key={user.id}
-                  className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-xs flex flex-col justify-between space-y-4 relative group"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      {/* Stylized Initial Badge without image requirement */}
-                      <div className="w-12 h-12 rounded-2xl bg-amber-500/15 dark:bg-amber-500/25 border border-amber-500/30 flex items-center justify-center text-amber-700 dark:text-amber-300 font-black text-sm font-mono shrink-0">
-                        {initials || user.id.slice(-2)}
-                      </div>
-
-                      <div>
-                        <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                          {user.name}
-                        </h4>
-                        <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5 font-mono">
-                          <Phone className="w-3 h-3 text-slate-400" />
-                          {user.phone}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col items-end gap-1">
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md border uppercase ${getRoleBadge(
-                          user.role
-                        )}`}
+                    return (
+                      <tr
+                        key={user.id}
+                        className={`transition hover:bg-amber-50/30 dark:hover:bg-[#35251C]/60 ${
+                          isOwnerAdmin
+                            ? 'bg-amber-500/5 dark:bg-amber-500/10'
+                            : ''
+                        }`}
                       >
-                        {getRoleLabel(user.role)}
-                      </span>
-                      {user.status === 'RESIGNED' ? (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-bold">
-                          Đã nghỉ việc
-                        </span>
-                      ) : user.status === 'OFF' ? (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-bold">
-                          Tạm nghỉ
-                        </span>
-                      ) : (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold">
-                          Đang làm việc
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                        {/* 1. Name & Initial Avatar */}
+                        <td className="p-3.5">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs font-mono shrink-0 shadow-xs ${
+                                isOwnerAdmin
+                                  ? 'bg-gradient-to-tr from-amber-500 to-amber-600 text-slate-950 ring-2 ring-amber-400/40'
+                                  : 'bg-amber-500/15 dark:bg-[#35251C] text-amber-700 dark:text-[#DDB892] border border-amber-500/30 dark:border-[#473225]'
+                              }`}
+                            >
+                              {initials || user.id.slice(-2)}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="font-bold text-slate-900 dark:text-[#FFFDF9] text-xs">
+                                  {user.name}
+                                </p>
+                                {isOwnerAdmin && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 shadow-xs">
+                                    👑 CHỦ QUÁN
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-500 dark:text-[#CDB49E] font-mono">
+                                ID: {user.id} {user.username ? `• @${user.username}` : ''}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
 
-                  {/* Info Box */}
-                  <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl space-y-1.5 text-xs">
-                    <div className="flex justify-between text-slate-500">
-                      <span>Vị trí công việc:</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">
-                        {getRoleLabel(user.role)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-start text-slate-500">
-                      <span>Chế độ lương:</span>
-                      <div className="text-right">
-                        {user.salaryType === 'COMBINED' ? (
-                          <>
-                            <span className="font-bold text-amber-700 dark:text-amber-400 font-mono block">
-                              {formatVND(user.baseSalary || 0)} đ/tháng
-                            </span>
-                            <span className="text-[11px] text-slate-600 dark:text-slate-400 font-mono">
-                              + {formatVND(user.hourlyRate || 0)} đ/h
-                            </span>
-                          </>
-                        ) : user.salaryType === 'HOURLY' ? (
-                          <span className="font-bold text-amber-700 dark:text-amber-400 font-mono">
-                            {formatVND(user.hourlyRate || user.baseSalary || 0)} đ / giờ
+                        {/* 2. Phone Number */}
+                        <td className="p-3.5">
+                          <span className="font-mono text-xs font-semibold text-slate-700 dark:text-[#EFE4D6]">
+                            {user.phone || 'Chưa cập nhật'}
                           </span>
-                        ) : (
-                          <span className="font-bold text-amber-700 dark:text-amber-400 font-mono">
-                            {formatVND(user.baseSalary || 0)} đ / tháng
+                        </td>
+
+                        {/* 3. Role */}
+                        <td className="p-3.5">
+                          <span
+                            className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border uppercase inline-block ${getRoleBadge(
+                              user.role
+                            )}`}
+                          >
+                            {getRoleLabel(user.role)}
                           </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex justify-between text-slate-500 pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
-                      <span>Ngày vào làm:</span>
-                      <span className="font-mono">{user.joinedDate}</span>
-                    </div>
-                  </div>
+                        </td>
 
-                  {/* Actions Footer */}
-                  <div className="pt-1 flex items-center justify-between border-t border-slate-100 dark:border-slate-800 text-xs">
-                    <span className="text-[11px] font-mono text-slate-400">ID: {user.id}</span>
+                        {/* 4. Salary Mode */}
+                        <td className="p-3.5 font-mono">
+                          {isOwnerAdmin ? (
+                            <span className="text-slate-600 dark:text-[#E8C5A5] font-semibold text-[11px]">
+                              Chủ cửa hàng (Toàn quyền)
+                            </span>
+                          ) : isAdmin ? (
+                            <div>
+                              {user.salaryType === 'COMBINED' ? (
+                                <>
+                                  <span className="font-bold text-amber-700 dark:text-[#E8C5A5] block">
+                                    {formatVND(user.baseSalary || 0)} đ/tháng
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 dark:text-[#CDB49E]">
+                                    + {formatVND(user.hourlyRate || 0)} đ/h
+                                  </span>
+                                </>
+                              ) : user.salaryType === 'HOURLY' ? (
+                                <span className="font-bold text-amber-700 dark:text-[#E8C5A5]">
+                                  {formatVND(user.hourlyRate || user.baseSalary || 0)} đ/giờ
+                                </span>
+                              ) : (
+                                <span className="font-bold text-amber-700 dark:text-[#E8C5A5]">
+                                  {formatVND(user.baseSalary || 0)} đ/tháng
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-500 dark:text-[#CDB49E] text-[11px]">
+                              {user.salaryType === 'HOURLY'
+                                ? 'Theo giờ'
+                                : user.salaryType === 'COMBINED'
+                                ? 'Cứng + Tiền giờ'
+                                : 'Lương cố định'}
+                            </span>
+                          )}
+                        </td>
 
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => openEditUserModal(user)}
-                        className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1 transition cursor-pointer"
-                        title="Chỉnh sửa thông tin nhân viên"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                        <span>Sửa</span>
-                      </button>
+                        {/* 5. Status */}
+                        <td className="p-3.5 text-center">
+                          {user.status === 'RESIGNED' ? (
+                            <span className="text-[10px] px-2.5 py-1 rounded-full bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-bold border border-rose-200 dark:border-rose-800">
+                              Đã nghỉ việc
+                            </span>
+                          ) : user.status === 'OFF' ? (
+                            <span className="text-[10px] px-2.5 py-1 rounded-full bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-bold">
+                              Tạm nghỉ
+                            </span>
+                          ) : (
+                            <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold border border-emerald-200 dark:border-emerald-800">
+                              Đang làm việc
+                            </span>
+                          )}
+                        </td>
 
-                      <button
-                        type="button"
-                        onClick={() => setUserToDelete(user)}
-                        className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
-                        title="Xóa nhân viên"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                        {/* 6. Joined Date */}
+                        <td className="p-3.5 text-center font-mono text-slate-500 dark:text-[#CDB49E] text-xs">
+                          {user.joinedDate || '2023-01-01'}
+                        </td>
+
+                        {/* 7. Action buttons */}
+                        <td className="p-3.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {isAdmin && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditUserModal(user)}
+                                  className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-[#35251C] hover:bg-amber-500 hover:text-slate-950 text-slate-700 dark:text-[#EFE4D6] font-bold text-xs flex items-center gap-1 transition cursor-pointer border border-transparent dark:border-[#473225]"
+                                  title="Chỉnh sửa thông tin"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                  <span>Sửa</span>
+                                </button>
+
+                                {!isOwnerAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setUserToDelete(user)}
+                                    className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                                    title="Xóa nhân viên"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

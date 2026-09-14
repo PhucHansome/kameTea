@@ -32,7 +32,11 @@ import {
 } from 'lucide-react';
 import { BillCheckoutModal } from '../pos/BillCheckoutModal';
 
-export const DeliveryManagement: React.FC = () => {
+interface DeliveryManagementProps {
+  hideStats?: boolean;
+}
+
+export const DeliveryManagement: React.FC<DeliveryManagementProps> = ({ hideStats = false }) => {
   const {
     orders,
     products,
@@ -260,95 +264,97 @@ export const DeliveryManagement: React.FC = () => {
       </div>
 
       {/* KPI Metric Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
-        {/* Metric 1: Pending */}
-        <div
-          onClick={() => setSelectedFilter('PENDING')}
-          className={`p-4 rounded-2xl border transition cursor-pointer ${
-            selectedFilter === 'PENDING'
-              ? 'bg-amber-500/15 border-amber-500'
-              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-amber-400'
-          }`}
-        >
-          <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 text-xs font-bold uppercase">
-            <span>Chờ chuẩn bị</span>
-            <Clock className="w-4 h-4" />
+      {!hideStats && (
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+          {/* Metric 1: Pending */}
+          <div
+            onClick={() => setSelectedFilter('PENDING')}
+            className={`p-4 rounded-2xl border transition cursor-pointer ${
+              selectedFilter === 'PENDING'
+                ? 'bg-amber-500/15 border-amber-500'
+                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-amber-400'
+            }`}
+          >
+            <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 text-xs font-bold uppercase">
+              <span>Chờ chuẩn bị</span>
+              <Clock className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-black text-slate-900 dark:text-white mt-1.5 font-mono">
+              {pendingCount}
+            </p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Đơn mới tiếp nhận</p>
           </div>
-          <p className="text-2xl font-black text-slate-900 dark:text-white mt-1.5 font-mono">
-            {pendingCount}
-          </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">Đơn mới tiếp nhận</p>
-        </div>
 
-        {/* Metric 2: Preparing */}
-        <div
-          onClick={() => setSelectedFilter('PREPARING')}
-          className={`p-4 rounded-2xl border transition cursor-pointer ${
-            selectedFilter === 'PREPARING'
-              ? 'bg-orange-500/15 border-orange-500'
-              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-orange-400'
-          }`}
-        >
-          <div className="flex items-center justify-between text-orange-600 dark:text-orange-400 text-xs font-bold uppercase">
-            <span>Đang đóng gói</span>
-            <PackageCheck className="w-4 h-4" />
+          {/* Metric 2: Preparing */}
+          <div
+            onClick={() => setSelectedFilter('PREPARING')}
+            className={`p-4 rounded-2xl border transition cursor-pointer ${
+              selectedFilter === 'PREPARING'
+                ? 'bg-orange-500/15 border-orange-500'
+                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-orange-400'
+            }`}
+          >
+            <div className="flex items-center justify-between text-orange-600 dark:text-orange-400 text-xs font-bold uppercase">
+              <span>Đang đóng gói</span>
+              <PackageCheck className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-black text-slate-900 dark:text-white mt-1.5 font-mono">
+              {preparingCount}
+            </p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Bếp đang nấu</p>
           </div>
-          <p className="text-2xl font-black text-slate-900 dark:text-white mt-1.5 font-mono">
-            {preparingCount}
-          </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">Bếp đang nấu</p>
-        </div>
 
-        {/* Metric 3: Delivering */}
-        <div
-          onClick={() => setSelectedFilter('DELIVERING')}
-          className={`p-4 rounded-2xl border transition cursor-pointer ${
-            selectedFilter === 'DELIVERING'
-              ? 'bg-blue-500/15 border-blue-500'
-              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-blue-400'
-          }`}
-        >
-          <div className="flex items-center justify-between text-blue-600 dark:text-blue-400 text-xs font-bold uppercase">
-            <span>Đang giao hàng</span>
-            <Truck className="w-4 h-4" />
+          {/* Metric 3: Delivering */}
+          <div
+            onClick={() => setSelectedFilter('DELIVERING')}
+            className={`p-4 rounded-2xl border transition cursor-pointer ${
+              selectedFilter === 'DELIVERING'
+                ? 'bg-blue-500/15 border-blue-500'
+                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-blue-400'
+            }`}
+          >
+            <div className="flex items-center justify-between text-blue-600 dark:text-blue-400 text-xs font-bold uppercase">
+              <span>Đang giao hàng</span>
+              <Truck className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-black text-blue-600 dark:text-blue-400 mt-1.5 font-mono">
+              {deliveringCount}
+            </p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Shipper đang trên đường</p>
           </div>
-          <p className="text-2xl font-black text-blue-600 dark:text-blue-400 mt-1.5 font-mono">
-            {deliveringCount}
-          </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">Shipper đang trên đường</p>
-        </div>
 
-        {/* Metric 4: Completed */}
-        <div
-          onClick={() => setSelectedFilter('COMPLETED')}
-          className={`p-4 rounded-2xl border transition cursor-pointer ${
-            selectedFilter === 'COMPLETED'
-              ? 'bg-emerald-500/15 border-emerald-500'
-              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-emerald-400'
-          }`}
-        >
-          <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 text-xs font-bold uppercase">
-            <span>Đã giao thành công</span>
-            <CheckCircle2 className="w-4 h-4" />
+          {/* Metric 4: Completed */}
+          <div
+            onClick={() => setSelectedFilter('COMPLETED')}
+            className={`p-4 rounded-2xl border transition cursor-pointer ${
+              selectedFilter === 'COMPLETED'
+                ? 'bg-emerald-500/15 border-emerald-500'
+                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-emerald-400'
+            }`}
+          >
+            <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 text-xs font-bold uppercase">
+              <span>Đã giao thành công</span>
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1.5 font-mono">
+              {completedTodayCount}
+            </p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Đã thanh toán & hoàn tất</p>
           </div>
-          <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1.5 font-mono">
-            {completedTodayCount}
-          </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">Đã thanh toán & hoàn tất</p>
-        </div>
 
-        {/* Metric 5: Total Ship Revenue */}
-        <div className="col-span-2 sm:col-span-1 p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-transparent border border-amber-500/30">
-          <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 text-xs font-bold uppercase">
-            <span>Doanh thu ship</span>
-            <DollarSign className="w-4 h-4" />
+          {/* Metric 5: Total Ship Revenue */}
+          <div className="col-span-2 sm:col-span-1 p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-transparent border border-amber-500/30">
+            <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 text-xs font-bold uppercase">
+              <span>Doanh thu ship</span>
+              <DollarSign className="w-4 h-4" />
+            </div>
+            <p className="text-xl font-black text-amber-600 dark:text-amber-400 mt-1.5 font-mono truncate">
+              {totalDeliveryRevenue.toLocaleString('vi-VN')}đ
+            </p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Đơn ship hoàn tất</p>
           </div>
-          <p className="text-xl font-black text-amber-600 dark:text-amber-400 mt-1.5 font-mono truncate">
-            {totalDeliveryRevenue.toLocaleString('vi-VN')}đ
-          </p>
-          <p className="text-[11px] text-slate-500 mt-0.5">Đơn ship hoàn tất</p>
         </div>
-      </div>
+      )}
 
       {/* Filter Tabs & Search Bar */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">

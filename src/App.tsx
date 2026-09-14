@@ -9,7 +9,8 @@ import { KDSView } from './components/kds/KDSView';
 import { HRMView } from './components/hrm/HRMView';
 import { MenuManagement } from './components/menu/MenuManagement';
 import { ReportsView } from './components/reports/ReportsView';
-import { DeliveryManagement } from './components/delivery/DeliveryManagement';
+import { UserManagementView } from './components/admin/UserManagementView';
+import { LoginView } from './components/auth/LoginView';
 import { CustomerSelfOrderModal } from './components/pos/CustomerSelfOrderModal';
 import { SupabaseIntegrationModal } from './components/common/SupabaseIntegrationModal';
 import { QRNotificationToast } from './components/pos/QRNotificationToast';
@@ -17,7 +18,7 @@ import { GlobalToast } from './components/common/GlobalToast';
 import { TableItem } from './types/pos';
 
 const POSContent: React.FC = () => {
-  const { currentTab, activeTable, setActiveTable, tables } = usePOS();
+  const { currentTab, activeTable, setActiveTable, tables, isAuthenticated, isAdmin } = usePOS();
 
   // Active modals
   const [checkoutTable, setCheckoutTable] = useState<TableItem | null>(null);
@@ -77,12 +78,13 @@ const POSContent: React.FC = () => {
     ? tables.find((t) => t.id === activeTable.id) || activeTable
     : null;
 
-  // If customer accessed via QR code on their phone browser, display full-screen Customer Self-Order view immediately!
+  // 1. If customer accessed via QR code on their phone browser, display full-screen Customer Self-Order view immediately!
   if (customerOrderTable) {
     return (
       <div className="fixed inset-0 z-50 bg-stone-950 flex flex-col">
         <CustomerSelfOrderModal
           table={customerOrderTable}
+          isStandalone={true}
           onClose={() => {
             setCustomerOrderTable(null);
             if (typeof window !== 'undefined' && window.location.hash) {
@@ -95,8 +97,18 @@ const POSContent: React.FC = () => {
     );
   }
 
+  // 2. Mandatory Authentication Guard: If not logged in, display the Login Screen
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col">
+        <LoginView />
+        <GlobalToast />
+      </div>
+    );
+  }
+
   return (
-    <MainLayout onOpenSupabaseDocs={() => setShowSupabaseModal(true)}>
+    <MainLayout onOpenSupabaseDocs={() => setShowSupabaseModal(false)}>
       {/* 1. POS TAB */}
       {currentTab === 'pos' && (
         <>
@@ -117,20 +129,20 @@ const POSContent: React.FC = () => {
         </>
       )}
 
-      {/* 2. SHIPPING & DELIVERY TAB */}
-      {currentTab === 'delivery' && <DeliveryManagement />}
-
-      {/* 3. KITCHEN DISPLAY SYSTEM (KDS) TAB */}
+      {/* 2. KITCHEN DISPLAY SYSTEM (KDS) */}
       {currentTab === 'kds' && <KDSView />}
 
-      {/* 4. MENU MANAGEMENT TAB */}
-      {currentTab === 'menu' && <MenuManagement />}
+      {/* 4. MENU MANAGEMENT TAB (Admin only) */}
+      {currentTab === 'menu' && (isAdmin ? <MenuManagement /> : null)}
 
       {/* 5. HUMAN RESOURCE MANAGEMENT (HRM) TAB */}
       {currentTab === 'hrm' && <HRMView />}
 
       {/* 6. REPORTS & P&L TAB */}
       {currentTab === 'reports' && <ReportsView />}
+
+      {/* 7. USER MANAGEMENT & RBAC TAB (Admin only) */}
+      {currentTab === 'users' && (isAdmin ? <UserManagementView /> : null)}
 
       {/* GLOBAL MODALS & TOASTS */}
       <QRNotificationToast />
@@ -153,10 +165,6 @@ const POSContent: React.FC = () => {
           onClose={() => setSplitMergeTable(null)}
         />
       )}
-
-      {showSupabaseModal && (
-        <SupabaseIntegrationModal onClose={() => setShowSupabaseModal(false)} />
-      )}
     </MainLayout>
   );
 };
@@ -168,4 +176,5 @@ export default function App() {
     </POSProvider>
   );
 }
+
 

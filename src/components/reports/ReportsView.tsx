@@ -44,6 +44,7 @@ import {
   CheckCircle2,
   Sparkles,
 } from 'lucide-react';
+import { POPULAR_VIETNAMESE_BANKS, findBank, buildVietQRUrl } from '../../utils/vietnameseBanks';
 import {
   ResponsiveContainer,
   BarChart,
@@ -71,31 +72,96 @@ export const ReportsView: React.FC = () => {
     dailySalesSummaries,
     isSubmitting,
     showToast,
+    isAdmin,
   } = usePOS();
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'BEST_SELLERS' | 'VOID_LOGS' | 'SETTINGS'>(
     'OVERVIEW'
   );
-  const [timeRange, setTimeRange] = useState<'TODAY' | 'WEEK' | 'MONTH' | 'ALL'>('TODAY');
+
+  // Advanced Date / Month / Year Filters
+  const todayStr = new Date().toISOString().split('T')[0];
+  const thisMonthStr = todayStr.slice(0, 7);
+  const thisYearStr = todayStr.slice(0, 4);
+
+  const [dateFilterMode, setDateFilterMode] = useState<'DAY' | 'MONTH' | 'YEAR' | 'ALL'>('DAY');
+  const [selectedDay, setSelectedDay] = useState<string>(todayStr);
+  const [selectedMonth, setSelectedMonth] = useState<string>(thisMonthStr);
+  const [selectedYear, setSelectedYear] = useState<string>(thisYearStr);
+
+  // For non-admin (Staff / Server): lock to today only and restrict subtabs
+  useEffect(() => {
+    if (!isAdmin) {
+      setDateFilterMode('DAY');
+      setSelectedDay(todayStr);
+      if (activeTab === 'SETTINGS' || activeTab === 'VOID_LOGS') {
+        setActiveTab('OVERVIEW');
+      }
+    }
+  }, [isAdmin, todayStr, activeTab]);
 
   // Store settings form state
   const [storeName, setStoreName] = useState(settings.storeName);
   const [address, setAddress] = useState(settings.address);
   const [phone, setPhone] = useState(settings.phone);
+  const [bankCode, setBankCode] = useState(settings.bankCode || 'STB');
   const [bankName, setBankName] = useState(settings.bankName);
   const [bankAccount, setBankAccount] = useState(settings.bankAccount);
   const [accountHolder, setAccountHolder] = useState(settings.accountHolder);
   const [taxPercent, setTaxPercent] = useState(settings.taxPercent);
   const [receiptFooter, setReceiptFooter] = useState(settings.receiptFooter);
+  const [autoPrintOnPayment, setAutoPrintOnPayment] = useState(settings.autoPrintOnPayment ?? true);
+  const [bankApiKey, setBankApiKey] = useState(settings.bankApiKey || '');
+  const [enableAutoBankConfirmation, setEnableAutoBankConfirmation] = useState(settings.enableAutoBankConfirmation ?? true);
 
-  // Paid orders
-  const paidOrders = orders.filter((o) => o.status === 'PAID');
+  // Filter Paid Orders according to chosen dateFilterMode
+  const allPaidOrders = orders.filter((o) => o.status === 'PAID');
+
+  const paidOrders = allPaidOrders.filter((o) => {
+    if (dateFilterMode === 'ALL') return true;
+
+    const dateStr = o.paidAt || o.createdAt;
+    if (!dateStr) return true;
+
+    const ordDate = new Date(dateStr);
+    const yyyy = ordDate.getFullYear().toString();
+    const mm = String(ordDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(ordDate.getDate()).padStart(2, '0');
+    const fullDate = `${yyyy}-${mm}-${dd}`;
+    const fullMonth = `${yyyy}-${mm}`;
+
+    if (dateFilterMode === 'DAY') {
+      return fullDate === selectedDay;
+    }
+    if (dateFilterMode === 'MONTH') {
+      return fullMonth === selectedMonth;
+    }
+    if (dateFilterMode === 'YEAR') {
+      return yyyy === selectedYear;
+    }
+    return true;
+  });
+
+  // Filter Daily Sales Summaries according to chosen dateFilterMode
+  const filteredSummaries = dailySalesSummaries.filter((s) => {
+    if (dateFilterMode === 'ALL') return true;
+    if (!s.date) return true;
+
+    const sDate = s.date;
+    const sMonth = s.date.slice(0, 7);
+    const sYear = s.date.slice(0, 4);
+
+    if (dateFilterMode === 'DAY') return sDate === selectedDay;
+    if (dateFilterMode === 'MONTH') return sMonth === selectedMonth;
+    if (dateFilterMode === 'YEAR') return sYear === selectedYear;
+    return true;
+  });
 
   // Historical Daily Summary aggregations
-  const totalCompressedRevenue = dailySalesSummaries.reduce((sum, s) => sum + (s.totalRevenue || 0), 0);
-  const totalCompressedOrders = dailySalesSummaries.reduce((sum, s) => sum + (s.totalOrders || 0), 0);
-  const totalCompressedCash = dailySalesSummaries.reduce((sum, s) => sum + (s.cashRevenue || 0), 0);
-  const totalCompressedTransfer = dailySalesSummaries.reduce((sum, s) => sum + (s.transferRevenue || 0), 0);
-  const totalCompressedShipping = dailySalesSummaries.reduce((sum, s) => sum + (s.shippingRevenue || 0), 0);
+  const totalCompressedRevenue = filteredSummaries.reduce((sum, s) => sum + (s.totalRevenue || 0), 0);
+  const totalCompressedOrders = filteredSummaries.reduce((sum, s) => sum + (s.totalOrders || 0), 0);
+  const totalCompressedCash = filteredSummaries.reduce((sum, s) => sum + (s.cashRevenue || 0), 0);
+  const totalCompressedTransfer = filteredSummaries.reduce((sum, s) => sum + (s.transferRevenue || 0), 0);
+  const totalCompressedShipping = filteredSummaries.reduce((sum, s) => sum + (s.shippingRevenue || 0), 0);
 
   // Total Revenue (Active Paid Orders + Compressed Daily Summaries)
   const activePaidRevenue = paidOrders.reduce((sum, o) => sum + (o.finalTotal || o.totalAmount), 0);
@@ -138,19 +204,61 @@ export const ReportsView: React.FC = () => {
     .reduce((sum, o) => sum + (o.finalTotal || o.totalAmount), 0);
   const dineInRevenue = totalRevenue - takeawayRevenue;
 
-  // Hourly Revenue chart mock data combined with real orders
-  const hourlyRevenueData = [
-    { time: '08:00', revenue: 150000, orders: 3 },
-    { time: '10:00', revenue: 320000, orders: 7 },
-    { time: '12:00', revenue: 680000, orders: 12 },
-    { time: '14:00', revenue: 450000, orders: 8 },
-    { time: '16:00', revenue: 890000, orders: 16 },
-    { time: '18:00', revenue: 1650000, orders: 24 },
-    { time: '20:00', revenue: 2100000, orders: 30 },
-    { time: '22:00', revenue: 940000, orders: 15 },
-  ];
+  // Dynamic Chart Breakdown based on Date Mode
+  let chartData: { time: string; revenue: number; orders: number }[] = [];
 
-  // Best selling products calculation
+  if (dateFilterMode === 'DAY') {
+    // Hourly breakdown
+    const hours = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
+    chartData = hours.map((h) => {
+      const hourNum = parseInt(h.split(':')[0], 10);
+      const matched = paidOrders.filter((o) => {
+        const d = new Date(o.paidAt || o.createdAt);
+        const ordHour = d.getHours();
+        return ordHour >= hourNum && ordHour < hourNum + 2;
+      });
+      const rev = matched.reduce((s, o) => s + (o.finalTotal || o.totalAmount), 0);
+      return { time: h, revenue: rev, orders: matched.length };
+    });
+  } else if (dateFilterMode === 'MONTH') {
+    // Daily breakdown for the chosen month (e.g. days 1..31)
+    const daysInMonth = 31;
+    const dailyMap: { [day: number]: { rev: number; count: number } } = {};
+    for (let i = 1; i <= daysInMonth; i++) dailyMap[i] = { rev: 0, count: 0 };
+
+    paidOrders.forEach((o) => {
+      const d = new Date(o.paidAt || o.createdAt);
+      const dayNum = d.getDate();
+      if (dailyMap[dayNum]) {
+        dailyMap[dayNum].rev += o.finalTotal || o.totalAmount;
+        dailyMap[dayNum].count += 1;
+      }
+    });
+
+    chartData = Object.keys(dailyMap).map((d) => ({
+      time: `N${d}`,
+      revenue: dailyMap[Number(d)].rev,
+      orders: dailyMap[Number(d)].count,
+    }));
+  } else if (dateFilterMode === 'YEAR') {
+    // 12 Months breakdown
+    chartData = Array.from({ length: 12 }, (_, i) => {
+      const mNum = i + 1;
+      const matched = paidOrders.filter((o) => {
+        const d = new Date(o.paidAt || o.createdAt);
+        return d.getMonth() + 1 === mNum;
+      });
+      const rev = matched.reduce((s, o) => s + (o.finalTotal || o.totalAmount), 0);
+      return { time: `T${mNum}`, revenue: rev, orders: matched.length };
+    });
+  } else {
+    // ALL time
+    chartData = [
+      { time: 'Tất cả', revenue: totalRevenue, orders: totalOrdersCount }
+    ];
+  }
+
+  // Best selling products calculation for current period
   const productSalesMap: { [prodName: string]: { qty: number; total: number } } = {};
   paidOrders.forEach((ord) => {
     ord.items.forEach((it) => {
@@ -178,13 +286,17 @@ export const ReportsView: React.FC = () => {
       storeName,
       address,
       phone,
+      bankCode,
       bankName,
       bankAccount,
       accountHolder,
       taxPercent: Number(taxPercent),
       receiptFooter,
+      autoPrintOnPayment,
+      bankApiKey,
+      enableAutoBankConfirmation,
     });
-    alert('Đã lưu cấu hình cửa hàng & Sacombank QR thành công!');
+    alert(`Đã lưu cấu hình cửa hàng & tài khoản ${bankName} thành công!`);
   };
 
   return (
@@ -217,7 +329,7 @@ export const ReportsView: React.FC = () => {
             }`}
           >
             <BarChart3 className="w-3.5 h-3.5" />
-            <span>Doanh Thu & Dòng Tiền</span>
+            <span>{isAdmin ? 'Doanh Thu & Dòng Tiền' : 'Doanh Thu Hôm Nay'}</span>
           </button>
 
           <button
@@ -233,37 +345,172 @@ export const ReportsView: React.FC = () => {
             <span>Món Bán Chạy</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('VOID_LOGS')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-              activeTab === 'VOID_LOGS'
-                ? 'bg-amber-500 text-stone-950 shadow-xs'
-                : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
-            }`}
-          >
-            <AlertTriangle className="w-3.5 h-3.5" />
-            <span>Sổ Hủy Món ({voidLogs.length})</span>
-          </button>
+          {/* Admin-only Subtabs */}
+          {isAdmin && (
+            <>
+              <button
+                type="button"
+                onClick={() => setActiveTab('VOID_LOGS')}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  activeTab === 'VOID_LOGS'
+                    ? 'bg-amber-500 text-stone-950 shadow-xs'
+                    : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>Sổ Hủy Món ({voidLogs.length})</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('SETTINGS')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-              activeTab === 'SETTINGS'
-                ? 'bg-amber-500 text-stone-950 shadow-xs'
-                : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
-            }`}
-          >
-            <Settings className="w-3.5 h-3.5" />
-            <span>Cài Đặt Sacombank & Quán</span>
-          </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('SETTINGS')}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  activeTab === 'SETTINGS'
+                    ? 'bg-amber-500 text-stone-950 shadow-xs'
+                    : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>Cài Đặt Sacombank & Quán</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {/* OVERVIEW TAB */}
       {activeTab === 'OVERVIEW' && (
         <div className="space-y-5">
+          {/* DATE / MONTH / YEAR FILTER TOOLBAR */}
+          <div className="bg-white dark:bg-stone-900 p-4 rounded-2xl border border-stone-200 dark:border-stone-800 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+            {!isAdmin ? (
+              <div className="flex flex-wrap items-center gap-3 w-full">
+                <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/15 border border-amber-500/30 rounded-xl">
+                  <Calendar className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span className="text-xs font-black text-amber-900 dark:text-amber-200">
+                    BÁO CÁO HÔM NAY: {new Date().toLocaleDateString('vi-VN')}
+                  </span>
+                </div>
+                <span className="text-xs font-medium text-stone-500">
+                  (Nhân viên phục vụ: Chỉ xem thống kê doanh thu và đơn hàng trong ngày hôm nay)
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 overflow-x-auto">
+                  <span className="text-xs font-black text-stone-500 uppercase tracking-wider whitespace-nowrap">
+                    Xem theo:
+                  </span>
+                  <div className="flex rounded-xl bg-stone-100 dark:bg-stone-800 p-1 border border-stone-200 dark:border-stone-700">
+                    <button
+                      type="button"
+                      onClick={() => setDateFilterMode('DAY')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                        dateFilterMode === 'DAY'
+                          ? 'bg-amber-500 text-stone-950 font-black shadow-xs'
+                          : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-white'
+                      }`}
+                    >
+                      📅 Theo Ngày
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDateFilterMode('MONTH')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                        dateFilterMode === 'MONTH'
+                          ? 'bg-amber-500 text-stone-950 font-black shadow-xs'
+                          : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-white'
+                      }`}
+                    >
+                      🗓️ Theo Tháng
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDateFilterMode('YEAR')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                        dateFilterMode === 'YEAR'
+                          ? 'bg-amber-500 text-stone-950 font-black shadow-xs'
+                          : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-white'
+                      }`}
+                    >
+                      📊 Theo Năm
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDateFilterMode('ALL')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                        dateFilterMode === 'ALL'
+                          ? 'bg-amber-500 text-stone-950 font-black shadow-xs'
+                          : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-white'
+                      }`}
+                    >
+                      Toàn Bộ
+                    </button>
+                  </div>
+                </div>
+
+                {/* Date Pickers based on mode */}
+                <div className="flex items-center gap-2">
+                  {dateFilterMode === 'DAY' && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={selectedDay}
+                        onChange={(e) => setSelectedDay(e.target.value)}
+                        className="px-3 py-1.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-xs font-bold text-stone-900 dark:text-stone-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDay(todayStr)}
+                        className="px-2.5 py-1.5 rounded-lg bg-stone-100 dark:bg-stone-800 text-[11px] font-bold text-stone-600 dark:text-stone-400 hover:bg-stone-200"
+                      >
+                        Hôm nay
+                      </button>
+                    </div>
+                  )}
+
+                  {dateFilterMode === 'MONTH' && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="month"
+                        value={selectedMonth}
+                        onChange={(e) => setSelectedMonth(e.target.value)}
+                        className="px-3 py-1.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-xs font-bold text-stone-900 dark:text-stone-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMonth(thisMonthStr)}
+                        className="px-2.5 py-1.5 rounded-lg bg-stone-100 dark:bg-stone-800 text-[11px] font-bold text-stone-600 dark:text-stone-400 hover:bg-stone-200"
+                      >
+                        Tháng này
+                      </button>
+                    </div>
+                  )}
+
+                  {dateFilterMode === 'YEAR' && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="2020"
+                        max="2035"
+                        value={selectedYear}
+                        onChange={(e) => setSelectedYear(e.target.value)}
+                        className="w-24 px-3 py-1.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-xs font-bold text-stone-900 dark:text-stone-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setSelectedYear(thisYearStr)}
+                        className="px-2.5 py-1.5 rounded-lg bg-stone-100 dark:bg-stone-800 text-[11px] font-bold text-stone-600 dark:text-stone-400 hover:bg-stone-200"
+                      >
+                        Năm nay
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
           {/* PRIMARY KPI CARDS: HIGHLIGHTING CASH VS TRANSFER SEPARATION */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Card 1: Total Revenue */}
@@ -330,22 +577,32 @@ export const ReportsView: React.FC = () => {
 
           {/* Charts Row */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            {/* Hourly Sales Bar Chart */}
+            {/* Dynamic Sales Bar Chart */}
             <div className="lg:col-span-8 bg-white dark:bg-stone-900 p-5 rounded-2xl border border-stone-200 dark:border-stone-800 shadow-xs space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-black text-stone-900 dark:text-stone-100">
-                    Phân Phối Doanh Thu Theo Khung Giờ (Cao Điểm)
+                    {dateFilterMode === 'DAY'
+                      ? `Phân Phối Doanh Thu Theo Giờ (${selectedDay})`
+                      : dateFilterMode === 'MONTH'
+                      ? `Phân Phối Doanh Thu Theo Ngày Trong Tháng (${selectedMonth})`
+                      : dateFilterMode === 'YEAR'
+                      ? `Phân Phối Doanh Thu 12 Tháng (${selectedYear})`
+                      : 'Biểu Đồ Tổng Doanh Thu Toàn Bộ'}
                   </h3>
                   <p className="text-xs text-stone-500">
-                    Giờ cao điểm của quán thường rơi vào 18:00 - 22:00 tối
+                    {dateFilterMode === 'DAY'
+                      ? 'Thống kê theo các khung giờ phục vụ'
+                      : dateFilterMode === 'MONTH'
+                      ? 'Biểu đồ dòng tiền từng ngày trong tháng'
+                      : 'Biểu đồ tăng trưởng các tháng'}
                   </p>
                 </div>
               </div>
 
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={hourlyRevenueData}>
+                  <BarChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
                     <XAxis dataKey="time" fontSize={11} />
                     <YAxis
@@ -723,48 +980,150 @@ export const ReportsView: React.FC = () => {
               />
             </div>
 
-            <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/60 space-y-3">
-              <h4 className="font-bold text-blue-900 dark:text-blue-300 text-xs flex items-center gap-1.5">
-                <Building2 className="w-4 h-4 text-blue-600" />
-                Cấu Hình Tài Khoản Ngân Hàng Sacombank (Mã QR Thanh Toán)
-              </h4>
+            <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/60 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-blue-200/80 dark:border-blue-800">
+                <div>
+                  <h4 className="font-bold text-blue-900 dark:text-blue-300 text-xs sm:text-sm flex items-center gap-1.5">
+                    <Building2 className="w-4 h-4 text-blue-600" />
+                    Cấu Hình Tài Khoản Ngân Hàng & Mã QR Nhận Tiền (VietQR Napas 24/7)
+                  </h4>
+                  <p className="text-[11px] text-stone-500 mt-0.5">
+                    Hỗ trợ 100% tất cả ngân hàng tại Việt Nam. Khách dùng bất kỳ app ngân hàng nào đều quét thanh toán được ngay.
+                  </p>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 w-fit">
+                  Đang dùng: {bankName} ({bankCode})
+                </span>
+              </div>
+
+              {/* Bank Selector */}
+              <div>
+                <label className="block text-xs font-bold text-stone-700 dark:text-stone-300 mb-1">
+                  Chọn Ngân Hàng Nhận Tiền:
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 max-h-40 overflow-y-auto p-2 bg-white dark:bg-stone-900 rounded-xl border border-stone-200 dark:border-stone-800 shadow-inner">
+                  {POPULAR_VIETNAMESE_BANKS.map((b) => {
+                    const isSelected = bankCode === b.code || bankName.toLowerCase() === b.shortName.toLowerCase();
+                    return (
+                      <button
+                        key={b.code}
+                        type="button"
+                        onClick={() => {
+                          setBankCode(b.code);
+                          setBankName(b.shortName);
+                        }}
+                        className={`p-2 rounded-lg text-left transition border text-xs cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-blue-50 dark:bg-blue-950/80 border-blue-500 text-blue-900 dark:text-blue-100 font-bold ring-2 ring-blue-500 shadow-xs'
+                            : 'border-stone-200 dark:border-stone-700 hover:border-blue-300 text-stone-700 dark:text-stone-300'
+                        }`}
+                      >
+                        <span className="font-black text-xs">{b.shortName}</span>
+                        <span className="text-[9px] text-stone-400 font-mono">{b.code}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block font-medium text-stone-600 dark:text-stone-400 mb-1">
-                    Ngân hàng:
+                  <label className="block font-medium text-stone-600 dark:text-stone-400 mb-1 text-xs">
+                    Tên ngân hàng (tùy chỉnh):
                   </label>
                   <input
                     type="text"
                     value={bankName}
                     onChange={(e) => setBankName(e.target.value)}
-                    placeholder="Sacombank"
-                    className="w-full p-2.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 font-bold uppercase"
+                    placeholder="Sacombank / Vietcombank / MB..."
+                    className="w-full p-2.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 font-bold uppercase text-xs"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium text-stone-600 dark:text-stone-400 mb-1">
+                  <label className="block font-medium text-stone-600 dark:text-stone-400 mb-1 text-xs">
                     Số tài khoản nhận tiền:
                   </label>
                   <input
                     type="text"
                     value={bankAccount}
                     onChange={(e) => setBankAccount(e.target.value)}
-                    className="w-full p-2.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 font-mono font-bold text-blue-600"
+                    placeholder="Nhập số tài khoản"
+                    className="w-full p-2.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 font-mono font-bold text-blue-600 text-xs"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium text-stone-600 dark:text-stone-400 mb-1">
+                  <label className="block font-medium text-stone-600 dark:text-stone-400 mb-1 text-xs">
                     Tên chủ tài khoản:
                   </label>
                   <input
                     type="text"
                     value={accountHolder}
                     onChange={(e) => setAccountHolder(e.target.value)}
-                    className="w-full p-2.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 font-bold uppercase text-stone-900 dark:text-stone-100"
+                    placeholder="NGUYEN VAN A"
+                    className="w-full p-2.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 font-bold uppercase text-stone-900 dark:text-stone-100 text-xs"
                   />
+                </div>
+              </div>
+
+              {/* Bank API Token & Webhook Configuration */}
+              <div className="pt-3 border-t border-stone-200 dark:border-stone-700 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-xs font-black text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
+                      <span>⚡ Tự Động Xác Nhận Khi Ngân Hàng Báo Có (Bank API & Webhook)</span>
+                    </label>
+                    <p className="text-[11px] text-stone-500 mt-0.5">
+                      Hệ thống tự động phát hiện khi khách quét QR Sacombank chuyển khoản thành công, chốt đơn và in bill ngay lập tức.
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={enableAutoBankConfirmation}
+                    onChange={(e) => setEnableAutoBankConfirmation(e.target.checked)}
+                    className="w-5 h-5 rounded text-amber-600 focus:ring-amber-500 border-amber-300 cursor-pointer"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-600 dark:text-stone-400 mb-1">
+                      API Token Ngân hàng (SePay / Casso / Bank Gateway):
+                    </label>
+                    <input
+                      type="password"
+                      value={bankApiKey}
+                      onChange={(e) => setBankApiKey(e.target.value)}
+                      placeholder="Nhập API Token SePay hoặc để trống nếu dùng Webhook"
+                      className="w-full p-2.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-600 dark:text-stone-400 mb-1">
+                      Đường dẫn Webhook Ngân hàng (Dán vào SePay/Casso/Ngân hàng):
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        readOnly
+                        value={typeof window !== 'undefined' ? `${window.location.origin}/api/payment/bank-webhook` : '/api/payment/bank-webhook'}
+                        className="w-full p-2 rounded-xl border border-stone-300 dark:border-stone-700 bg-stone-100 dark:bg-stone-800 text-[11px] font-mono select-all text-stone-700 dark:text-stone-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const url = `${window.location.origin}/api/payment/bank-webhook`;
+                          navigator.clipboard.writeText(url);
+                          alert('Đã sao chép đường dẫn Webhook vào bộ nhớ đệm!');
+                        }}
+                        className="px-2.5 py-2 rounded-xl bg-stone-200 dark:bg-stone-700 hover:bg-stone-300 dark:hover:bg-stone-600 text-xs font-bold shrink-0 cursor-pointer"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -778,6 +1137,24 @@ export const ReportsView: React.FC = () => {
                 value={receiptFooter}
                 onChange={(e) => setReceiptFooter(e.target.value)}
                 className="w-full p-2.5 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"
+              />
+            </div>
+
+            {/* Tự động in hóa đơn */}
+            <div className="p-3.5 bg-amber-50/70 dark:bg-amber-950/30 rounded-2xl border border-amber-200 dark:border-amber-800/60 flex items-center justify-between">
+              <div>
+                <label className="font-bold text-xs text-stone-900 dark:text-stone-100 flex items-center gap-1.5 cursor-pointer">
+                  <span>🖨️ Tự động in bill khi khách thanh toán thành công</span>
+                </label>
+                <p className="text-[11px] text-stone-500 mt-0.5">
+                  Khi thu ngân xác nhận đã thu tiền hoặc quét QR thành công, hệ thống sẽ tự động gửi lệnh in hóa đơn 80mm ngay lập tức.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={autoPrintOnPayment}
+                onChange={(e) => setAutoPrintOnPayment(e.target.checked)}
+                className="w-5 h-5 rounded text-amber-600 focus:ring-amber-500 border-amber-300 cursor-pointer"
               />
             </div>
 

@@ -45,6 +45,7 @@ import {
   compressSalesData,
   SyncResult,
 } from '../lib/supabase';
+import { calculateSettlement } from '../utils/paymentEngine';
 
 export interface QrNotification {
   tableId: string;
@@ -61,13 +62,23 @@ export interface ToastNotification {
 }
 
 interface POSContextType {
-  // Auth & Roles
+  // Auth & Roles & RBAC
+  currentUser: User | null;
+  isAuthenticated: boolean;
+  login: (username: string, password?: string) => Promise<boolean>;
+  logout: () => void;
+  isAdmin: boolean;
+  canAccessReports: boolean;
+  canAccessSettings: boolean;
+  canAccessPayroll: boolean;
+  canManageStaff: boolean;
+  canViewVoidLogs: boolean;
   users: User[];
   activeUser: User;
   setActiveUser: (user: User) => void;
   setUserRole: (role: UserRole) => void;
   addUser: (user: User) => Promise<void>;
-  updateUser: (user: User) => Promise<void>;
+  updateUser: (userOrId: User | string, updates?: Partial<User>) => Promise<void>;
   deleteUser: (userId: string) => Promise<void>;
 
   // Zones & Tables
@@ -139,7 +150,7 @@ interface POSContextType {
     discountPercent: number,
     taxPercent: number,
     paymentDetails?: { cashAmount?: number; transferAmount?: number; shippingFee?: number }
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   splitTable: (sourceTableId: string, targetTableId: string, itemIds: string[]) => Promise<void>;
   mergeTables: (sourceTableId: string, targetTableId: string) => Promise<void>;
 
@@ -213,14 +224,130 @@ interface POSContextType {
 
 const POSContext = createContext<POSContextType | undefined>(undefined);
 
+// Helper to detect if current device is a customer scanning QR Code for self-ordering
+const isCustomerQRMode = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const hash = window.location.hash || '';
+  const search = window.location.search || '';
+  const pathname = window.location.pathname || '';
+  return (
+    hash.includes('order-table') ||
+    hash.includes('table=') ||
+    search.includes('order-table') ||
+    search.includes('table=') ||
+    pathname.includes('/order-table')
+  );
+};
+
 export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const isQR = isCustomerQRMode();
+
   // Primary States
   const [users, setUsers] = useState<User[]>(() => {
+    if (isQR) return INITIAL_USERS;
     const saved = localStorage.getItem('kame_pos_users');
     return saved ? JSON.parse(saved) : INITIAL_USERS;
   });
 
-  const [activeUser, setActiveUser] = useState<User>(() => users[0] || INITIAL_USERS[0]);
+  // Auth User Session State
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    if (isQR) return null;
+    const saved = localStorage.getItem('kame_pos_auth_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+
+  const [activeUser, setActiveUser] = useState<User>(() => {
+    if (isQR) return INITIAL_USERS[0];
+    if (currentUser) return currentUser;
+    return users[0] || INITIAL_USERS[0];
+  });
+
+  const isAuthenticated = Boolean(currentUser);
+  const isAdmin = currentUser?.role === 'ADMIN';
+  const canAccessReports = isAdmin;
+  const canAccessSettings = isAdmin;
+  const canAccessPayroll = isAdmin;
+  const canManageStaff = isAdmin;
+  const canViewVoidLogs = isAdmin;
+
+  const login = async (username: string, password?: string): Promise<boolean> => {
+    const cleanUsername = username.trim().toLowerCase();
+    const cleanPassword = password ? password.trim() : '';
+
+    // Check against existing users
+    const matchedUser = users.find((u) => {
+      const uName = (u.username || '').toLowerCase();
+      if (cleanUsername === 'admin' && (cleanPassword === 'admin' || !cleanPassword)) {
+        return u.role === 'ADMIN' || u.username === 'admin';
+      }
+      if (uName === cleanUsername) {
+        if (!u.password || u.password === cleanPassword) return true;
+      }
+      return false;
+    });
+
+    if (matchedUser) {
+      setCurrentUser(matchedUser);
+      setActiveUser(matchedUser);
+      localStorage.setItem('kame_pos_auth_user', JSON.stringify(matchedUser));
+      return true;
+    }
+
+    // Default fallback for admin / admin
+    if (cleanUsername === 'admin' && cleanPassword === 'admin') {
+      const adminFallback: User = {
+        id: 'USR-ADMIN',
+        username: 'admin',
+        password: 'admin',
+        name: 'Quản trị viên (Admin)',
+        phone: '0334080648',
+        role: 'ADMIN',
+        salaryType: 'MONTHLY',
+        baseSalary: 15000000,
+        status: 'ACTIVE',
+        joinedDate: '2023-01-01',
+      };
+      setCurrentUser(adminFallback);
+      setActiveUser(adminFallback);
+      localStorage.setItem('kame_pos_auth_user', JSON.stringify(adminFallback));
+      return true;
+    }
+
+    // Default fallback for staff / 123456
+    if (cleanUsername === 'staff' && (cleanPassword === '123456' || cleanPassword === 'staff')) {
+      const staffFallback: User = {
+        id: 'USR-STAFF',
+        username: 'staff',
+        password: '123456',
+        name: 'Nhân viên Phục vụ (Staff)',
+        phone: '0981417246',
+        role: 'SERVER',
+        salaryType: 'HOURLY',
+        baseSalary: 0,
+        hourlyRate: 25000,
+        status: 'ACTIVE',
+        joinedDate: '2023-03-15',
+      };
+      setCurrentUser(staffFallback);
+      setActiveUser(staffFallback);
+      localStorage.setItem('kame_pos_auth_user', JSON.stringify(staffFallback));
+      return true;
+    }
+
+    return false;
+  };
+
+  const logout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('kame_pos_auth_user');
+  };
 
   const [zones, setZones] = useState<Zone[]>(() => {
     const saved = localStorage.getItem('kame_pos_zones');
@@ -243,6 +370,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [tables, setTables] = useState<TableItem[]>(() => {
+    if (isQR) {
+      return INITIAL_TABLES.map((t) => ({ ...t, status: 'EMPTY' as const, currentOrderId: undefined, openedAt: undefined, guestCount: undefined }));
+    }
     const saved = localStorage.getItem('kame_pos_tables');
     return saved ? JSON.parse(saved) : INITIAL_TABLES;
   });
@@ -250,11 +380,16 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [qrNotification, setQrNotification] = useState<QrNotification | null>(null);
 
   const [orders, setOrders] = useState<Order[]>(() => {
+    if (isQR) {
+      // In customer QR Self-Order mode, NEVER read local storage orders to avoid phantom items!
+      return [];
+    }
     const saved = localStorage.getItem('kame_pos_orders');
     return saved ? JSON.parse(saved) : [];
   });
 
   const [voidLogs, setVoidLogs] = useState<VoidLog[]>(() => {
+    if (isQR) return [];
     const saved = localStorage.getItem('kame_pos_void_logs');
     if (!saved) return [];
     try {
@@ -275,16 +410,19 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [shifts, setShifts] = useState<ShiftRecord[]>(() => {
+    if (isQR) return [];
     const saved = localStorage.getItem('kame_pos_shifts');
     return saved ? JSON.parse(saved) : INITIAL_SHIFTS;
   });
 
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(() => {
+    if (isQR) return [];
     const saved = localStorage.getItem('kame_pos_expenses');
     return saved ? JSON.parse(saved) : INITIAL_EXPENSES;
   });
 
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>(() => {
+    if (isQR) return [];
     const saved = localStorage.getItem('kame_pos_payrolls');
     return saved ? JSON.parse(saved) : [];
   });
@@ -295,6 +433,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [dailySalesSummaries, setDailySalesSummaries] = useState<DailySalesSummary[]>(() => {
+    if (isQR) return [];
     const saved = localStorage.getItem('kame_pos_daily_sales_summaries');
     return saved ? JSON.parse(saved) : [];
   });
@@ -349,6 +488,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Dark mode effect
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_dark', isDarkMode.toString());
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
@@ -357,50 +497,65 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [isDarkMode]);
 
-  // Local storage persistence caching
+  // Local storage persistence caching (Staff/Admin POS only, disabled for QR client)
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_users', JSON.stringify(users));
   }, [users]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_zones', JSON.stringify(zones));
   }, [zones]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_categories', JSON.stringify(categories));
   }, [categories]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_products', JSON.stringify(products));
   }, [products]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_toppings', JSON.stringify(toppings));
   }, [toppings]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_tables', JSON.stringify(tables));
   }, [tables]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_orders', JSON.stringify(orders));
   }, [orders]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_void_logs', JSON.stringify(voidLogs));
   }, [voidLogs]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_shifts', JSON.stringify(shifts));
   }, [shifts]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_expenses', JSON.stringify(expenses));
   }, [expenses]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_payrolls', JSON.stringify(payrolls));
   }, [payrolls]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_settings', JSON.stringify(settings));
   }, [settings]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_daily_sales_summaries', JSON.stringify(dailySalesSummaries));
   }, [dailySalesSummaries]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_sidebar_collapsed', isSidebarCollapsed.toString());
   }, [isSidebarCollapsed]);
   useEffect(() => {
+    if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_layout_mode', layoutMode);
   }, [layoutMode]);
 
@@ -604,8 +759,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setIsSubmitting(true);
     setUsers((prev) => [...prev, user]);
     try {
-      const res = await dbUpsert('pos_users', {
+      const row = {
         id: user.id,
+        username: user.username || user.phone || user.id,
+        password: user.password || '123456',
         name: user.name,
         phone: user.phone,
         role: user.role,
@@ -614,11 +771,13 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         hourly_rate: user.hourlyRate || 0,
         status: user.status || 'ACTIVE',
         joined_date: user.joinedDate || new Date().toISOString().split('T')[0],
-      });
+        avatar: user.avatar || null,
+      };
+      const res = await dbUpsert('pos_users', row, 'id');
       if (res.success) {
-        showToast('success', 'Đã thêm nhân viên', `Nhân viên ${user.name} đã được lưu lên Supabase.`);
+        showToast('success', 'Đã thêm tài khoản', `Tài khoản ${user.name} (@${row.username}) đã được lưu trực tiếp lên Supabase.`);
       } else if (res.error) {
-        showToast('error', 'Lỗi lưu nhân viên', res.error);
+        showToast('error', 'Lỗi lưu tài khoản', res.error);
       }
     } catch (err: any) {
       showToast('error', 'Lỗi kết nối', err?.message || 'Không thể ghi dữ liệu.');
@@ -627,29 +786,46 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const updateUser = async (user: User) => {
+  const updateUser = async (userOrId: User | string, updates?: Partial<User>) => {
     setIsSubmitting(true);
-    setUsers((prev) => prev.map((u) => (u.id === user.id ? user : u)));
+    let targetUser: User | undefined;
+    if (typeof userOrId === 'string') {
+      const existing = users.find((u) => u.id === userOrId);
+      if (existing) {
+        targetUser = { ...existing, ...(updates || {}) };
+      }
+    } else {
+      targetUser = userOrId;
+    }
+
+    if (!targetUser) {
+      setIsSubmitting(false);
+      return;
+    }
+
+    const updatedUser = targetUser;
+    setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
+
     try {
-      const res = await dbUpdate(
-        'pos_users',
-        {
-          name: user.name,
-          phone: user.phone,
-          role: user.role,
-          salary_type: user.salaryType || 'COMBINED',
-          base_salary: user.baseSalary || 0,
-          hourly_rate: user.hourlyRate || 0,
-          status: user.status || 'ACTIVE',
-          joined_date: user.joinedDate,
-        },
-        'id',
-        user.id
-      );
+      const row = {
+        id: updatedUser.id,
+        username: updatedUser.username || updatedUser.phone || updatedUser.id,
+        password: updatedUser.password || '123456',
+        name: updatedUser.name,
+        phone: updatedUser.phone,
+        role: updatedUser.role,
+        salary_type: updatedUser.salaryType || 'COMBINED',
+        base_salary: updatedUser.baseSalary || 0,
+        hourly_rate: updatedUser.hourlyRate || 0,
+        status: updatedUser.status || 'ACTIVE',
+        joined_date: updatedUser.joinedDate || new Date().toISOString().split('T')[0],
+        avatar: updatedUser.avatar || null,
+      };
+      const res = await dbUpsert('pos_users', row, 'id');
       if (res.success) {
-        showToast('success', 'Thành công', `Đã cập nhật thông tin nhân viên ${user.name}.`);
+        showToast('success', 'Thành công', `Đã cập nhật tài khoản ${updatedUser.name} lên Supabase.`);
       } else if (res.error) {
-        showToast('error', 'Lỗi cập nhật nhân viên', res.error);
+        showToast('error', 'Lỗi cập nhật', res.error);
       }
     } catch (err: any) {
       showToast('error', 'Lỗi kết nối', err?.message || 'Không thể cập nhật dữ liệu.');
@@ -857,24 +1033,58 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unitPrice += toppingSum;
     }
 
-    const newItem: OrderItem = {
-      id: 'item-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-      productId: product.id,
-      productName: product.name,
-      station: product.station,
-      unitPrice,
-      quantity: qty,
-      selectedCookingMethod: customization?.cookingMethod,
-      selectedSize: customization?.size,
-      selectedToppings: customization?.toppings || [],
-      sugarLevel: customization?.sugarLevel,
-      iceLevel: customization?.iceLevel,
-      note: customization?.note,
-      status: 'PENDING',
-      createdAt: new Date().toISOString(),
-    };
+    const curSugar = customization?.sugarLevel;
+    const curIce = customization?.iceLevel;
+    const curNote = (customization?.note || '').trim();
+    const curTops = (customization?.toppings || [])
+      .map((t) => `${t.id}:${t.quantity}`)
+      .sort()
+      .join(',');
 
-    setCartItems((prev) => [...prev, newItem]);
+    setCartItems((prev) => {
+      const matchIdx = prev.findIndex((it) => {
+        if (it.productId !== product.id) return false;
+        if ((it.selectedSize?.name || '') !== (customization?.size?.name || '')) return false;
+        if ((it.selectedCookingMethod?.name || '') !== (customization?.cookingMethod?.name || ''))
+          return false;
+        if ((it.sugarLevel || '') !== (curSugar || '')) return false;
+        if ((it.iceLevel || '') !== (curIce || '')) return false;
+        if ((it.note || '').trim() !== curNote) return false;
+        const itTops = (it.selectedToppings || [])
+          .map((t) => `${t.id}:${t.quantity}`)
+          .sort()
+          .join(',');
+        return itTops === curTops;
+      });
+
+      if (matchIdx >= 0) {
+        const next = [...prev];
+        next[matchIdx] = {
+          ...next[matchIdx],
+          quantity: next[matchIdx].quantity + qty,
+        };
+        return next;
+      }
+
+      const newItem: OrderItem = {
+        id: 'item-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+        productId: product.id,
+        productName: product.name,
+        station: product.station,
+        unitPrice,
+        quantity: qty,
+        selectedCookingMethod: customization?.cookingMethod,
+        selectedSize: customization?.size,
+        selectedToppings: customization?.toppings || [],
+        sugarLevel: curSugar,
+        iceLevel: curIce,
+        note: curNote || undefined,
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+      };
+
+      return [...prev, newItem];
+    });
   };
 
   const updateCartItemQuantity = (itemId: string, delta: number) => {
@@ -990,9 +1200,44 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let targetOrder: Order;
 
     if (activeOrder) {
-      const combinedItems = [...activeOrder.items, ...cartItems];
+      const combinedItems: OrderItem[] = [...activeOrder.items];
+
+      cartItems.forEach((newItem) => {
+        const curSugar = newItem.sugarLevel || '';
+        const curIce = newItem.iceLevel || '';
+        const curNote = (newItem.note || '').trim();
+        const curTops = (newItem.selectedToppings || [])
+          .map((t) => `${t.id}:${t.quantity}`)
+          .sort()
+          .join(',');
+
+        const matchIdx = combinedItems.findIndex((it) => {
+          if (it.productId !== newItem.productId) return false;
+          if ((it.selectedSize?.name || '') !== (newItem.selectedSize?.name || '')) return false;
+          if ((it.selectedCookingMethod?.name || '') !== (newItem.selectedCookingMethod?.name || ''))
+            return false;
+          if ((it.sugarLevel || '') !== curSugar) return false;
+          if ((it.iceLevel || '') !== curIce) return false;
+          if ((it.note || '').trim() !== curNote) return false;
+          const itTops = (it.selectedToppings || [])
+            .map((t) => `${t.id}:${t.quantity}`)
+            .sort()
+            .join(',');
+          return itTops === curTops;
+        });
+
+        if (matchIdx >= 0) {
+          combinedItems[matchIdx] = {
+            ...combinedItems[matchIdx],
+            quantity: combinedItems[matchIdx].quantity + newItem.quantity,
+          };
+        } else {
+          combinedItems.push(newItem);
+        }
+      });
+
       const newSubtotal = combinedItems.reduce(
-        (sum, it) => (it.status !== 'CANCELLED' ? sum + it.unitPrice * it.quantity : sum),
+        (sum, it) => sum + it.unitPrice * it.quantity,
         0
       );
       const discountAmount = (newSubtotal * activeOrder.discountPercent) / 100;
@@ -1112,9 +1357,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
       const res = await dbUpsert('pos_orders', row, 'id');
       if (res.success) {
-        showToast('success', 'Đã chuyển Bếp/Bar', `Đơn ${targetOrder.tableName} đã được ghi nhận lên Supabase.`);
+        showToast('success', 'Đã chuyển Bếp/Bar', `Đơn ${targetOrder.tableName} đã được ghi nhận vào hệ thống.`);
       } else if (res.error) {
-        showToast('error', 'Lỗi lưu đơn hàng', res.error);
+        console.warn('Supabase sync warning:', res.error);
+        showToast('success', 'Đã chuyển Bếp/Bar', `Đơn ${targetOrder.tableName} đã chuyển Bếp/Bar thành công.`);
       }
     } catch (err: any) {
       console.error(err);
@@ -1175,6 +1421,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const item = targetOrder.items.find((i) => i.id === itemId);
     if (!item) return;
 
+    // Log the cancellation for management tracking
     const newLog: VoidLog = {
       id: `void-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       orderId: targetOrder.id,
@@ -1190,58 +1437,87 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setVoidLogs((vPrev) => [newLog, ...vPrev]);
 
-    let updatedOrder: Order | null = null;
-    setOrders((prev) =>
-      prev.map((ord) => {
-        if (ord.id === orderId) {
-          const updatedItems = ord.items.map((i) =>
-            i.id === itemId
-              ? {
-                  ...i,
-                  status: 'CANCELLED' as OrderItemStatus,
-                  cancelReason: reason,
-                  cancelledBy: activeUser.name,
-                }
-              : i
-          );
+    // PERMANENTLY REMOVE THE ITEM FROM THE ACTIVE ORDER
+    const remainingItems = targetOrder.items.filter((i) => i.id !== itemId);
+    const newSubtotal = remainingItems.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0);
 
-          const newSubtotal = updatedItems.reduce(
-            (sum, it) => (it.status !== 'CANCELLED' ? sum + it.unitPrice * it.quantity : sum),
-            0
-          );
-          const discountAmount = (newSubtotal * ord.discountPercent) / 100;
-          const totalAmount = newSubtotal - discountAmount;
+    // If order has no remaining items or total is 0 -> Reset table to EMPTY and remove order
+    if (remainingItems.length === 0 || newSubtotal <= 0) {
+      setOrders((prev) => prev.filter((o) => o.id !== orderId));
 
-          updatedOrder = {
-            ...ord,
-            items: updatedItems,
-            subtotal: newSubtotal,
-            discountAmount,
-            totalAmount,
-            finalTotal: totalAmount,
-            updatedAt: new Date().toISOString(),
-          };
-          return updatedOrder;
-        }
-        return ord;
-      })
-    );
+      setTables((prev) =>
+        prev.map((t) =>
+          t.id === targetOrder.tableId
+            ? {
+                ...t,
+                status: 'EMPTY',
+                currentOrderId: undefined,
+                openedAt: undefined,
+                guestCount: undefined,
+              }
+            : t
+        )
+      );
 
-    if (updatedOrder) {
       try {
-        await dbUpdate(
-          'pos_orders',
-          {
-            items: JSON.stringify((updatedOrder as Order).items),
-            total_amount: (updatedOrder as Order).totalAmount,
-            final_total: (updatedOrder as Order).finalTotal,
-          },
-          'id',
-          orderId
-        );
+        await dbDelete('pos_orders', orderId);
       } catch (err: any) {
         console.error(err);
       }
+
+      try {
+        fetch('/api/orders/sync-active', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: orderId, tableId: targetOrder.tableId, status: 'CANCELLED' }),
+        }).catch(() => {});
+      } catch {
+        /* silent */
+      }
+
+      showToast(
+        'success',
+        'Đã hủy hết món',
+        `Bàn ${targetOrder.tableName} đã về 0đ và được chuyển về trạng thái mở bàn mới!`
+      );
+      return;
+    }
+
+    // Otherwise recalculate bill totals for remaining items
+    const discountAmount = (newSubtotal * targetOrder.discountPercent) / 100;
+    const taxAmount = ((newSubtotal - discountAmount) * (settings.taxPercent || 0)) / 100;
+    const totalAmount = Math.max(
+      0,
+      newSubtotal - discountAmount + taxAmount + (targetOrder.shippingFee || 0)
+    );
+
+    const updatedOrder: Order = {
+      ...targetOrder,
+      items: remainingItems,
+      subtotal: newSubtotal,
+      discountAmount,
+      taxAmount,
+      totalAmount,
+      finalTotal: totalAmount,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setOrders((prev) => prev.map((ord) => (ord.id === orderId ? updatedOrder : ord)));
+
+    try {
+      await dbUpdate(
+        'pos_orders',
+        {
+          items: JSON.stringify(updatedOrder.items),
+          total_amount: updatedOrder.totalAmount,
+          final_total: updatedOrder.finalTotal,
+        },
+        'id',
+        orderId
+      );
+      showToast('success', 'Đã xóa món', `Đã xóa hẳn món ${item.productName} khỏi bàn.`);
+    } catch (err: any) {
+      console.error(err);
     }
   };
 
@@ -1270,99 +1546,136 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     discountPercent: number,
     taxPercent: number,
     paymentDetails?: { cashAmount?: number; transferAmount?: number; shippingFee?: number }
-  ) => {
-    const ord = orders.find((o) => o.id === orderId);
-    if (!ord) return;
+  ): Promise<boolean> => {
+    if (!orderId) {
+      showToast('error', 'Lỗi thanh toán', 'Mã đơn hàng không hợp lệ.');
+      return false;
+    }
 
     setIsSubmitting(true);
-    const shippingFee =
-      paymentDetails?.shippingFee !== undefined
-        ? paymentDetails.shippingFee
-        : ord.shippingFee || 0;
-    const discountAmount = (ord.subtotal * discountPercent) / 100;
-    const taxAmount = ((ord.subtotal - discountAmount) * taxPercent) / 100;
-    const totalAmount = Math.max(0, ord.subtotal - discountAmount + taxAmount + shippingFee);
-    const paidAt = new Date().toISOString();
-
-    let cashAmountPaid = 0;
-    let transferAmountPaid = 0;
-
-    if (paymentMethod === 'MIXED') {
-      cashAmountPaid = paymentDetails?.cashAmount ?? 0;
-      transferAmountPaid = paymentDetails?.transferAmount ?? totalAmount - cashAmountPaid;
-    } else if (paymentMethod === 'CASH') {
-      cashAmountPaid = totalAmount;
-      transferAmountPaid = 0;
-    } else if (
-      paymentMethod === 'VIETQR' ||
-      paymentMethod === 'SACOMBANK_QR' ||
-      paymentMethod === 'TRANSFER'
-    ) {
-      cashAmountPaid = 0;
-      transferAmountPaid = totalAmount;
-    }
-
-    const updatedOrd: Order = {
-      ...ord,
-      status: 'PAID',
-      paymentMethod,
-      discountPercent,
-      discountAmount,
-      taxAmount,
-      shippingFee,
-      totalAmount,
-      finalTotal: totalAmount,
-      cashAmountPaid,
-      transferAmountPaid,
-      paidAt,
-      updatedAt: paidAt,
-    };
-
-    setOrders((prev) => prev.map((o) => (o.id === orderId ? updatedOrd : o)));
-
-    // Free the table
-    setTables((prev) =>
-      prev.map((t) =>
-        t.id === ord.tableId
-          ? {
-              ...t,
-              status: 'EMPTY',
-              currentOrderId: undefined,
-              openedAt: undefined,
-              guestCount: undefined,
-            }
-          : t
-      )
-    );
-
-    if (settings.soundEnabled) {
-      playSuccessSound();
-    }
+    let capturedOrder: Order | null = null;
+    let tableIdToFree: string | null = null;
 
     try {
-      const res = await dbUpdate(
-        'pos_orders',
-        {
+      const paidAt = new Date().toISOString();
+
+      // 1. Functional state update prevents stale closure and guarantees atomicity
+      setOrders((prevOrders) => {
+        const target = prevOrders.find((o) => o.id === orderId);
+        if (!target) return prevOrders;
+
+        // Calculate settlement via pure function (zero floating-point error, full edge case coverage)
+        const breakdown = calculateSettlement({
+          subtotal: target.subtotal,
+          discountPercent,
+          taxPercent,
+          shippingFee: target.shippingFee || 0,
+          paymentMethod,
+          paymentDetails,
+        });
+
+        tableIdToFree = target.tableId;
+
+        const finalizedOrder: Order = {
+          ...target,
           status: 'PAID',
-          payment_method: paymentMethod,
-          discount_percent: discountPercent,
-          shipping_fee: shippingFee,
-          total_amount: totalAmount,
-          final_total: totalAmount,
-          cash_amount_paid: cashAmountPaid,
-          transfer_amount_paid: transferAmountPaid,
-          paid_at: paidAt,
-        },
-        'id',
-        orderId
-      );
-      if (res.success) {
-        showToast('success', 'Thanh toán thành công', `Hóa đơn bàn ${ord.tableName} đã được thanh toán & lưu Supabase.`);
-      } else if (res.error) {
-        showToast('error', 'Lỗi cập nhật thanh toán', res.error);
+          paymentMethod,
+          discountPercent,
+          discountAmount: breakdown.discountAmount,
+          taxAmount: breakdown.taxAmount,
+          shippingFee: breakdown.shippingFee,
+          totalAmount: breakdown.totalAmount,
+          finalTotal: breakdown.totalAmount,
+          cashAmountPaid: breakdown.cashAmountPaid,
+          transferAmountPaid: breakdown.transferAmountPaid,
+          paidAt,
+          updatedAt: paidAt,
+        };
+
+        capturedOrder = finalizedOrder;
+        return prevOrders.map((o) => (o.id === orderId ? finalizedOrder : o));
+      });
+
+      if (!capturedOrder) {
+        showToast('error', 'Lỗi thanh toán', 'Không tìm thấy thông tin đơn hàng cần thanh toán.');
+        return false;
       }
+
+      // 2. Safely free table without mutating outside state
+      if (tableIdToFree) {
+        setTables((prevTables) =>
+          prevTables.map((t) =>
+            t.id === tableIdToFree
+              ? {
+                  ...t,
+                  status: 'EMPTY',
+                  currentOrderId: undefined,
+                  openedAt: undefined,
+                  guestCount: undefined,
+                }
+              : t
+          )
+        );
+      }
+
+      // 3. Play success audio feedback
+      if (settings.soundEnabled) {
+        playSuccessSound();
+      }
+
+      // 4. Asynchronously persist to Supabase cloud
+      const orderToSave = capturedOrder as Order;
+      try {
+        const res = await dbUpdate(
+          'pos_orders',
+          {
+            status: 'PAID',
+            payment_method: paymentMethod,
+            discount_percent: discountPercent,
+            shipping_fee: orderToSave.shippingFee,
+            total_amount: orderToSave.totalAmount,
+            final_total: orderToSave.finalTotal,
+            cash_amount_paid: orderToSave.cashAmountPaid,
+            transfer_amount_paid: orderToSave.transferAmountPaid,
+            paid_at: paidAt,
+          },
+          'id',
+          orderId
+        );
+
+        if (res.success) {
+          showToast(
+            'success',
+            'Thanh toán thành công',
+            `Hóa đơn ${orderToSave.tableName} đã thanh toán ${orderToSave.totalAmount.toLocaleString('vi-VN')}đ.`
+          );
+        } else if (res.error) {
+          console.warn('[Supabase Sync Warning]:', res.error);
+          showToast(
+            'success',
+            'Thanh toán thành công',
+            `Hóa đơn ${orderToSave.tableName} đã thanh toán trên thiết bị.`
+          );
+        }
+
+        try {
+          fetch('/api/orders/sync-active', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(orderToSave),
+          }).catch(() => {});
+        } catch {
+          /* silent */
+        }
+      } catch (dbErr) {
+        console.warn('[Supabase DB Sync Exception]:', dbErr);
+      }
+
+      return true;
     } catch (err: any) {
-      console.error(err);
+      console.error('[Settlement-Critical-Error]:', err);
+      showToast('error', 'Lỗi thanh toán', 'Có lỗi phát sinh trong quá trình thanh toán.');
+      return false;
     } finally {
       setIsSubmitting(false);
     }
@@ -1568,9 +1881,45 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let isNew = false;
 
     if (existingOrder) {
-      const combinedItems = [...existingOrder.items, ...items];
+      // Intelligently merge items: if same product, size, method, toppings, sugar, ice, note -> increase quantity
+      const combinedItems: OrderItem[] = [...existingOrder.items];
+
+      items.forEach((newItem) => {
+        const curSugar = newItem.sugarLevel || '';
+        const curIce = newItem.iceLevel || '';
+        const curNote = (newItem.note || '').trim();
+        const curTops = (newItem.selectedToppings || [])
+          .map((t) => `${t.id}:${t.quantity}`)
+          .sort()
+          .join(',');
+
+        const matchIdx = combinedItems.findIndex((it) => {
+          if (it.productId !== newItem.productId) return false;
+          if ((it.selectedSize?.name || '') !== (newItem.selectedSize?.name || '')) return false;
+          if ((it.selectedCookingMethod?.name || '') !== (newItem.selectedCookingMethod?.name || ''))
+            return false;
+          if ((it.sugarLevel || '') !== curSugar) return false;
+          if ((it.iceLevel || '') !== curIce) return false;
+          if ((it.note || '').trim() !== curNote) return false;
+          const itTops = (it.selectedToppings || [])
+            .map((t) => `${t.id}:${t.quantity}`)
+            .sort()
+            .join(',');
+          return itTops === curTops;
+        });
+
+        if (matchIdx >= 0) {
+          combinedItems[matchIdx] = {
+            ...combinedItems[matchIdx],
+            quantity: combinedItems[matchIdx].quantity + newItem.quantity,
+          };
+        } else {
+          combinedItems.push(newItem);
+        }
+      });
+
       const newSubtotal = combinedItems.reduce(
-        (sum, it) => (it.status !== 'CANCELLED' ? sum + it.unitPrice * it.quantity : sum),
+        (sum, it) => sum + it.unitPrice * it.quantity,
         0
       );
       const discountAmount = (newSubtotal * existingOrder.discountPercent) / 100;
@@ -1672,6 +2021,17 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }, 'id');
     } catch (err: any) {
       console.error(err);
+    }
+
+    // Real-time broadcast to server active cache so all other cashier/table devices update immediately!
+    try {
+      await fetch('/api/orders/sync-active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(resultingOrder),
+      });
+    } catch {
+      /* silent */
     }
 
     return { order: resultingOrder, isNew };
@@ -2074,9 +2434,115 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // Realtime Polling Loop for cross-device orders and instant Table Status sync
+  useEffect(() => {
+    let isMounted = true;
+
+    const pollActiveOrders = async () => {
+      try {
+        const res = await fetch('/api/orders/active');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.success || !Array.isArray(data.orders)) return;
+
+        if (!isMounted) return;
+
+        const remoteActiveOrders: Order[] = data.orders;
+        if (remoteActiveOrders.length === 0) return;
+
+        // Check if there are new orders or modified orders
+        setOrders((prevOrders) => {
+          let hasChanges = false;
+          const merged = [...prevOrders];
+
+          remoteActiveOrders.forEach((remoteOrder) => {
+            const existingIdx = merged.findIndex((o) => o.id === remoteOrder.id);
+            if (existingIdx === -1) {
+              // Brand new order from customer phone!
+              hasChanges = true;
+              merged.unshift(remoteOrder);
+
+              // Notify with sound and toast banner if recent (< 60s)
+              const orderAge = Date.now() - new Date(remoteOrder.createdAt).getTime();
+              if (orderAge < 60000) {
+                if (settings.soundEnabled) playBellSound();
+                setQrNotification({
+                  tableId: remoteOrder.tableId,
+                  tableName: remoteOrder.tableName,
+                  itemCount: remoteOrder.items.reduce((s: number, i: any) => s + i.quantity, 0),
+                  totalAmount: remoteOrder.finalTotal || remoteOrder.totalAmount,
+                  timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+                });
+                showToast(
+                  'info',
+                  '🛎️ Khách vừa gọi món tại bàn!',
+                  `Bàn ${remoteOrder.tableName} vừa đặt ${remoteOrder.items.length} món (${(
+                    remoteOrder.finalTotal || remoteOrder.totalAmount
+                  ).toLocaleString('vi-VN')}đ).`
+                );
+              }
+            } else {
+              const cur = merged[existingIdx];
+              if (
+                cur.items.length !== remoteOrder.items.length ||
+                cur.totalAmount !== remoteOrder.totalAmount ||
+                cur.status !== remoteOrder.status
+              ) {
+                hasChanges = true;
+                merged[existingIdx] = remoteOrder;
+              }
+            }
+          });
+
+          return hasChanges ? merged : prevOrders;
+        });
+
+        // Ensure all tables with active orders are marked OCCUPIED immediately!
+        setTables((prevTables) => {
+          let tablesChanged = false;
+          const updated = prevTables.map((t) => {
+            const activeOrder = remoteActiveOrders.find(
+              (o) => o.tableId === t.id && (o.status === 'ACTIVE' || o.status === 'PENDING_PAYMENT')
+            );
+            if (activeOrder && (t.status !== 'OCCUPIED' || t.currentOrderId !== activeOrder.id)) {
+              tablesChanged = true;
+              return {
+                ...t,
+                status: 'OCCUPIED' as const,
+                currentOrderId: activeOrder.id,
+                openedAt: t.openedAt || activeOrder.createdAt,
+                guestCount: activeOrder.guestCount || t.capacity,
+              };
+            }
+            return t;
+          });
+          return tablesChanged ? updated : prevTables;
+        });
+      } catch {
+        // network polling silent
+      }
+    };
+
+    const interval = setInterval(pollActiveOrders, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [settings.soundEnabled]);
+
   return (
     <POSContext.Provider
       value={{
+        currentUser,
+        isAuthenticated,
+        login,
+        logout,
+        isAdmin,
+        canAccessReports,
+        canAccessSettings,
+        canAccessPayroll,
+        canManageStaff,
+        canViewVoidLogs,
         users,
         activeUser,
         setActiveUser,

@@ -140,7 +140,7 @@ export const MenuManagement: React.FC = () => {
               Quản Lý Menu, Danh Mục & Topping
             </h2>
             <p className="text-xs text-stone-500 font-medium mt-0.5">
-              Cài đặt danh sách món ăn, giá bán, trạm làm món và trạng thái còn/hết hàng.
+              Cài đặt danh sách món ăn, giá bán, trạm làm món và tùy chọn topping.
             </p>
           </div>
         </div>
@@ -237,7 +237,6 @@ export const MenuManagement: React.FC = () => {
                   <th className="p-3.5">Danh mục</th>
                   <th className="p-3.5">Trạm</th>
                   <th className="p-3.5 text-right">Giá bán</th>
-                  <th className="p-3.5 text-center">Trạng thái kho</th>
                   <th className="p-3.5 text-right">Thao tác</th>
                 </tr>
               </thead>
@@ -275,19 +274,6 @@ export const MenuManagement: React.FC = () => {
                       </td>
                       <td className="p-3.5 text-right font-black text-amber-600 dark:text-amber-400 text-sm">
                         {prod.basePrice.toLocaleString('vi-VN')}đ
-                      </td>
-                      <td className="p-3.5 text-center">
-                        <button
-                          type="button"
-                          onClick={() => toggleProductAvailability(prod.id)}
-                          className={`px-3 py-1 rounded-full text-xs font-bold transition ${
-                            prod.isAvailable
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 hover:bg-emerald-200'
-                              : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300 hover:bg-red-200'
-                          }`}
-                        >
-                          {prod.isAvailable ? '✓ Còn hàng' : '✕ Hết hàng'}
-                        </button>
                       </td>
                       <td className="p-3.5 text-right">
                         <div className="flex items-center justify-end gap-1.5">

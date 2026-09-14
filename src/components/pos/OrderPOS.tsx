@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { Product, TableItem, OrderItem, OrderType } from '../../types/pos';
 import { CustomizationModal } from './CustomizationModal';
+import { CupLabelModal } from './CupLabelModal';
 import {
   ArrowLeft,
   Search,
@@ -24,6 +25,8 @@ import {
   Phone,
   ReceiptText,
   Receipt,
+  Tag,
+  Printer,
 } from 'lucide-react';
 
 interface OrderPOSProps {
@@ -59,6 +62,7 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [guestCount, setGuestCount] = useState<number>(table.guestCount || table.capacity || 2);
   const [customizingProduct, setCustomizingProduct] = useState<Product | null>(null);
+  const [showCupLabels, setShowCupLabels] = useState<boolean>(false);
 
   // Takeaway / Dine-in and Shipping Fee states
   const isTakeawayZone = table.zone === 'Mang Về' || table.name.toLowerCase().includes('mang về');
@@ -156,6 +160,8 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
         deliveryPhone,
         customerNote,
       });
+      // Offer instant sticker printing for easy cup & food labeling
+      setShowCupLabels(true);
     } catch (err: unknown) {
       alert((err as Error).message || 'Có lỗi xảy ra khi gửi bếp');
     }
@@ -167,9 +173,14 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
       alert('Vui lòng nhập lý do hủy món');
       return;
     }
+    const isOnlyItem = activeOrder.items.length <= 1 && cartItems.length === 0;
     cancelOrderItem(activeOrder.id, voidingItem.itemId, voidReason);
     setVoidingItem(null);
     setVoidReason('Khách đổi món khác');
+
+    if (isOnlyItem) {
+      onBackToTables();
+    }
   };
 
   const getItemStatusBadge = (status: OrderItem['status']) => {
@@ -216,52 +227,68 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
     <div className="flex flex-col lg:flex-row gap-5 h-full">
       {/* LEFT COLUMN: Menu & Category Browser */}
       <div className="flex-1 flex flex-col space-y-4 min-w-0">
-        {/* Top bar: Back, Table Info & Search */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white dark:bg-stone-900 p-4 rounded-2xl border border-stone-200 dark:border-stone-800 shadow-xs">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onBackToTables}
-              className="p-2.5 rounded-xl border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-700 dark:text-stone-300 transition flex items-center gap-1.5 text-xs font-bold"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Sơ đồ bàn</span>
-            </button>
+        {/* Top bar: Back, Table Info, Action buttons & Search */}
+        <div className="bg-white dark:bg-stone-900 p-3.5 sm:p-4 rounded-2xl border border-stone-200 dark:border-stone-800 shadow-xs space-y-3">
+          {/* Header Row: Back button, Table name, and Print sticker button */}
+          <div className="flex items-center justify-between gap-3">
+            {/* Left: Back to tables + Table info badge */}
+            <div className="flex items-center gap-2.5 min-w-0">
+              <button
+                type="button"
+                onClick={onBackToTables}
+                className="px-3 py-2 rounded-xl border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-700 dark:text-stone-300 transition flex items-center gap-1.5 text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
+              >
+                <ArrowLeft className="w-4 h-4 shrink-0" />
+                <span>Sơ đồ bàn</span>
+              </button>
 
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-base font-black text-amber-600 dark:text-amber-400 font-mono">
+              <div className="flex items-center gap-2 bg-amber-50 dark:bg-stone-800 px-3 py-1.5 rounded-xl border border-amber-200/60 dark:border-stone-700 shrink-0">
+                <span className="text-sm sm:text-base font-black text-amber-600 dark:text-amber-400 font-mono">
                   {table.code}
                 </span>
-                <span className="text-sm font-bold text-stone-900 dark:text-stone-100">
+                <span className="text-xs sm:text-sm font-bold text-stone-900 dark:text-stone-100">
                   {table.name}
                 </span>
-                <span className="text-xs text-stone-500 font-medium">({table.zone})</span>
+                <span className="text-[11px] sm:text-xs text-stone-500 font-medium">({table.zone})</span>
               </div>
             </div>
+
+            {/* Right: In Tem Dán Ly Button */}
+            {activeOrder && activeOrder.items.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowCupLabels(true)}
+                className="px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap shrink-0 shadow-2xs"
+                title="In Tem Dán Ly Cho Đơn Này"
+              >
+                <Tag className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span className="whitespace-nowrap">In Tem Dán Ly</span>
+              </button>
+            )}
           </div>
 
-          {/* Search & Station Pills */}
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1 sm:w-64">
+          {/* Search & Station Filter Row */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1 border-t border-stone-100 dark:border-stone-800/80">
+            <div className="relative flex-1">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
               <input
                 type="text"
-                placeholder="Tìm món, mãng cầu, ốc..."
+                placeholder="Tìm kiếm món ăn, thức uống, topping..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 rounded-xl text-xs sm:text-sm border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                className="w-full pl-9 pr-3 py-2 rounded-xl text-xs sm:text-sm border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800/90 text-stone-900 dark:text-stone-100 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
               />
             </div>
 
             {/* Station Quick Filter */}
-            <div className="flex rounded-xl border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 p-0.5">
+            <div className="flex rounded-xl border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 p-0.5 shrink-0 self-end sm:self-auto">
               <button
                 type="button"
                 onClick={() => setStationFilter('ALL')}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
                   stationFilter === 'ALL'
                     ? 'bg-white dark:bg-stone-700 text-stone-900 dark:text-stone-100 shadow-xs'
-                    : 'text-stone-500 hover:text-stone-800'
+                    : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'
                 }`}
               >
                 Tất cả
@@ -269,25 +296,25 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
               <button
                 type="button"
                 onClick={() => setStationFilter('BAR')}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
                   stationFilter === 'BAR'
                     ? 'bg-amber-500 text-stone-950 shadow-xs'
-                    : 'text-stone-500 hover:text-stone-800'
+                    : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'
                 }`}
               >
-                <CupSoda className="w-3 h-3" />
+                <CupSoda className="w-3.5 h-3.5" />
                 <span>Bar</span>
               </button>
               <button
                 type="button"
                 onClick={() => setStationFilter('KITCHEN')}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
                   stationFilter === 'KITCHEN'
                     ? 'bg-amber-500 text-stone-950 shadow-xs'
-                    : 'text-stone-500 hover:text-stone-800'
+                    : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200'
                 }`}
               >
-                <Flame className="w-3 h-3" />
+                <Flame className="w-3.5 h-3.5" />
                 <span>Bếp</span>
               </button>
             </div>
@@ -380,9 +407,10 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
 
                   <button
                     type="button"
-                    className="p-1.5 rounded-xl bg-amber-500 group-hover:bg-amber-600 text-stone-950 shadow-xs transition"
+                    className="p-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-stone-950 shadow-xs transition flex items-center justify-center cursor-pointer"
+                    title={hasOptions ? "Tùy chọn món" : "Thêm vào đơn"}
                   >
-                    {hasOptions ? <Sparkles className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                    <Plus className="w-4 h-4" />
                   </button>
                 </div>
               </div>
@@ -425,37 +453,8 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
             </div>
           </div>
 
-          {/* Dine-In / Takeaway Selection Tabs */}
-          <div className="grid grid-cols-2 gap-1.5 p-1 bg-stone-200/70 dark:bg-stone-900/80 rounded-xl">
-            <button
-              type="button"
-              onClick={() => handleOrderTypeChange('DINE_IN')}
-              className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition ${
-                orderType === 'DINE_IN'
-                  ? 'bg-white dark:bg-stone-800 text-amber-700 dark:text-amber-400 shadow-xs'
-                  : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
-              }`}
-            >
-              <UtensilsCrossed className="w-3.5 h-3.5" />
-              <span>Ăn tại chỗ</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleOrderTypeChange('TAKEAWAY')}
-              className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition ${
-                orderType === 'TAKEAWAY'
-                  ? 'bg-amber-500 text-stone-950 font-black shadow-xs'
-                  : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
-              }`}
-            >
-              <Bike className="w-3.5 h-3.5" />
-              <span>Đem về / Ship</span>
-            </button>
-          </div>
-
-          {/* Takeaway & Shipping Fee Options Box */}
-          {orderType === 'TAKEAWAY' && (
+          {/* Only show Takeaway / Delivery options if this is specifically a Takeaway slot */}
+          {table.zone === 'Mang Về' && (
             <div className="p-2.5 bg-amber-500/10 border border-amber-300 dark:border-amber-800 rounded-xl space-y-2 text-xs">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1">
@@ -513,6 +512,46 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
                   />
                 </div>
               </div>
+
+              {/* Dedicated Quick Action Buttons for Takeaway / Ship Orders */}
+              <div className="flex items-center gap-1.5 pt-1.5 border-t border-amber-300/60 dark:border-amber-800/60">
+                <button
+                  type="button"
+                  onClick={() => setShowCupLabels(true)}
+                  disabled={!activeOrder && cartItems.length === 0}
+                  className="flex-1 py-1.5 px-2 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-stone-950 font-bold text-[11px] flex items-center justify-center gap-1 shadow-2xs transition cursor-pointer"
+                  title="In tem dán ly / dán hộp ship"
+                >
+                  <Tag className="w-3 h-3" />
+                  <span>In Tem Dán Ly</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (cartItems.length > 0) {
+                      try {
+                        await sendCartToKitchen(guestCount, {
+                          orderType,
+                          shippingFee,
+                          deliveryAddress,
+                          deliveryPhone,
+                          customerNote,
+                        });
+                      } catch (e) {
+                        console.error(e);
+                      }
+                    }
+                    onOpenCheckout(table);
+                  }}
+                  disabled={!activeOrder && cartItems.length === 0}
+                  className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-[11px] flex items-center justify-center gap-1 shadow-2xs transition cursor-pointer"
+                  title="Thanh toán & xuất bill ngay cho khách ship"
+                >
+                  <Receipt className="w-3 h-3" />
+                  <span>Thanh Toán Ngay</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -520,101 +559,89 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
         {/* Order Items Scrollable Container */}
         <div className="p-4 overflow-y-auto flex-1 space-y-4">
           {/* SECTION 1: Active Order Items (Sent to Kitchen) */}
-          {activeOrder && activeOrder.items.length > 0 && (
+          {activeOrder && activeOrder.items.filter((it) => it.status !== 'CANCELLED').length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-stone-500 uppercase tracking-wider border-b border-stone-200 dark:border-stone-800 pb-1">
                 <span className="flex items-center gap-1">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                  Món Đã Gửi Bếp ({activeOrder.items.length})
+                  Món Đã Gửi Bếp ({activeOrder.items.filter((it) => it.status !== 'CANCELLED').length})
                 </span>
                 <span className="font-mono">{activeOrder.orderCode}</span>
               </div>
 
-              {activeOrder.items.map((item) => {
-                const badge = getItemStatusBadge(item.status);
-                const isCancelled = item.status === 'CANCELLED';
+              {activeOrder.items
+                .filter((item) => item.status !== 'CANCELLED')
+                .map((item) => {
+                  const badge = getItemStatusBadge(item.status);
 
-                return (
-                  <div
-                    key={item.id}
-                    className={`p-2.5 rounded-xl border text-xs transition ${
-                      isCancelled
-                        ? 'bg-red-50/50 dark:bg-red-950/20 border-red-200 dark:border-red-900/50 opacity-60'
-                        : 'bg-stone-50 dark:bg-stone-800/40 border-stone-200 dark:border-stone-800'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-stone-900 dark:text-stone-100">
-                            {item.quantity}x {item.productName}
-                          </span>
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm ${badge.bg}`}>
-                            {badge.label}
-                          </span>
+                  return (
+                    <div
+                      key={item.id}
+                      className="p-2.5 rounded-xl border text-xs transition bg-stone-50 dark:bg-stone-800/40 border-stone-200 dark:border-stone-800"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-stone-900 dark:text-stone-100">
+                              {item.quantity}x {item.productName}
+                            </span>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm ${badge.bg}`}>
+                              {badge.label}
+                            </span>
+                          </div>
+
+                          {/* Details */}
+                          {item.selectedCookingMethod && (
+                            <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium">
+                              • Cách chế biến: {item.selectedCookingMethod.name}
+                            </p>
+                          )}
+                          {item.selectedSize && (
+                            <p className="text-[11px] text-stone-600 dark:text-stone-300">
+                              • Size: {item.selectedSize.name}
+                            </p>
+                          )}
+                          {item.selectedToppings.length > 0 && (
+                            <p className="text-[11px] text-stone-600 dark:text-stone-300">
+                              • Topping:{' '}
+                              {item.selectedToppings
+                                .map((t) => `${t.name}${t.quantity > 1 ? ` (x${t.quantity})` : ''}`)
+                                .join(', ')}
+                            </p>
+                          )}
+                          {(item.sugarLevel || item.iceLevel) && (
+                            <p className="text-[11px] text-stone-500">
+                              • Đường: {item.sugarLevel || '100%'} | Đá: {item.iceLevel || '100%'}
+                            </p>
+                          )}
+                          {item.note && (
+                            <p className="text-[11px] text-orange-600 italic font-medium">
+                              • Ghi chú: {item.note}
+                            </p>
+                          )}
                         </div>
 
-                        {/* Details */}
-                        {item.selectedCookingMethod && (
-                          <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium">
-                            • Cách chế biến: {item.selectedCookingMethod.name}
-                          </p>
-                        )}
-                        {item.selectedSize && (
-                          <p className="text-[11px] text-stone-600 dark:text-stone-300">
-                            • Size: {item.selectedSize.name}
-                          </p>
-                        )}
-                        {item.selectedToppings.length > 0 && (
-                          <p className="text-[11px] text-stone-600 dark:text-stone-300">
-                            • Topping:{' '}
-                            {item.selectedToppings
-                              .map((t) => `${t.name}${t.quantity > 1 ? ` (x${t.quantity})` : ''}`)
-                              .join(', ')}
-                          </p>
-                        )}
-                        {(item.sugarLevel || item.iceLevel) && (
-                          <p className="text-[11px] text-stone-500">
-                            • Đường: {item.sugarLevel || '100%'} | Đá: {item.iceLevel || '100%'}
-                          </p>
-                        )}
-                        {item.note && (
-                          <p className="text-[11px] text-orange-600 italic font-medium">
-                            • Ghi chú: {item.note}
-                          </p>
-                        )}
-                        {isCancelled && (
-                          <p className="text-[11px] text-red-600 font-bold mt-1">
-                            Lý do hủy: {item.cancelReason} ({item.cancelledBy})
-                          </p>
-                        )}
-                      </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="font-black text-stone-900 dark:text-stone-100">
+                            {(item.unitPrice * item.quantity).toLocaleString('vi-VN')}đ
+                          </span>
 
-                      <div className="flex flex-col items-end gap-1">
-                        <span
-                          className={`font-black ${
-                            isCancelled ? 'line-through text-stone-400' : 'text-stone-900 dark:text-stone-100'
-                          }`}
-                        >
-                          {(item.unitPrice * item.quantity).toLocaleString('vi-VN')}đ
-                        </span>
-
-                        {!isCancelled && item.status !== 'SERVED' && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setVoidingItem({ itemId: item.id, name: item.productName })
-                            }
-                            className="text-[11px] text-red-600 hover:text-red-700 underline font-medium"
-                          >
-                            Hủy món
-                          </button>
-                        )}
+                          {item.status !== 'SERVED' && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setVoidingItem({ itemId: item.id, name: item.productName })
+                              }
+                              className="text-[11px] text-red-600 hover:text-red-700 underline font-medium cursor-pointer"
+                            >
+                              Xóa món
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           )}
 
@@ -776,21 +803,32 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
             )}
 
             <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => onOpenSplitMerge(table)}
-                className="py-2.5 px-3 rounded-xl border border-stone-300 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 text-xs font-bold flex items-center justify-center gap-1.5 transition"
-              >
-                <ArrowRightLeft className="w-3.5 h-3.5" />
-                <span>Tách / Gộp</span>
-              </button>
+              {activeOrder && activeOrder.items.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setShowCupLabels(true)}
+                  className="py-2.5 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-900 dark:text-amber-300 text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                >
+                  <Tag className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                  <span>In Tem Dán Ly</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onOpenSplitMerge(table)}
+                  className="py-2.5 px-3 rounded-xl border border-stone-300 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 text-xs font-bold flex items-center justify-center gap-1.5 transition"
+                >
+                  <ArrowRightLeft className="w-3.5 h-3.5" />
+                  <span>Tách / Gộp</span>
+                </button>
+              )}
 
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   if (cartItems.length > 0) {
                     try {
-                      sendCartToKitchen(guestCount, {
+                      await sendCartToKitchen(guestCount, {
                         orderType,
                         shippingFee: orderType === 'TAKEAWAY' ? shippingFee : 0,
                         deliveryAddress,
@@ -804,15 +842,43 @@ export const OrderPOS: React.FC<OrderPOSProps> = ({
                   onOpenCheckout(table);
                 }}
                 disabled={!activeOrder && cartItems.length === 0}
-                className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition"
+                className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
               >
                 <Receipt className="w-3.5 h-3.5" />
-                <span>Thanh Toán / Xuất Bill Ngay</span>
+                <span>Thanh Toán / Xuất Bill</span>
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Cup Sticker Printing Modal */}
+      {showCupLabels && (activeOrder || cartItems.length > 0) && (
+        <CupLabelModal
+          order={
+            activeOrder || {
+              id: 'ORD-' + (table.currentOrderId || Date.now()),
+              orderCode: table.code || 'MANG-VE',
+              tableId: table.id,
+              tableName: table.name,
+              guestCount,
+              status: 'SERVING',
+              orderType,
+              items: cartItems,
+              subtotal: cartTotal,
+              discount: 0,
+              discountType: 'PERCENT',
+              shippingFee: orderType === 'TAKEAWAY' ? shippingFee : 0,
+              total: cartTotal + (orderType === 'TAKEAWAY' ? shippingFee : 0),
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              paymentMethod: 'CASH',
+              paymentStatus: 'UNPAID',
+            }
+          }
+          onClose={() => setShowCupLabels(false)}
+        />
+      )}
 
       {/* Customization Modal */}
       {customizingProduct && (

@@ -30,11 +30,13 @@ import {
 interface CustomerSelfOrderModalProps {
   table: TableItem;
   onClose: () => void;
+  isStandalone?: boolean;
 }
 
 export const CustomerSelfOrderModal: React.FC<CustomerSelfOrderModalProps> = ({
   table,
   onClose,
+  isStandalone = false,
 }) => {
   const { categories, products, toppings, submitCustomerSelfOrder } = usePOS();
 
@@ -44,6 +46,7 @@ export const CustomerSelfOrderModal: React.FC<CustomerSelfOrderModalProps> = ({
   const [customerNote, setCustomerNote] = useState<string>('');
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [submittedOrderCode, setSubmittedOrderCode] = useState<string>('');
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState<boolean>(false);
 
   // Selected item for customization
   const [customizingProduct, setCustomizingProduct] = useState<Product | null>(null);
@@ -94,24 +97,54 @@ export const CustomerSelfOrderModal: React.FC<CustomerSelfOrderModalProps> = ({
     const toppingsTotal = selectedToppings.reduce((sum, t) => sum + t.price * t.quantity, 0);
     const unitPrice = basePrice + methodPrice + toppingsTotal;
 
-    const newItem: OrderItem = {
-      id: 'cust-item-' + Date.now() + Math.random().toString(36).substring(2, 5),
-      productId: customizingProduct.id,
-      productName: customizingProduct.name,
-      unitPrice,
-      quantity: itemQty,
-      station: customizingProduct.station,
-      selectedCookingMethod: selectedMethod,
-      selectedSize,
-      selectedToppings,
-      sugarLevel: customizingProduct.station === 'BAR' ? sugarLevel : undefined,
-      iceLevel: customizingProduct.station === 'BAR' ? iceLevel : undefined,
-      note: itemNote.trim() ? itemNote.trim() : undefined,
-      status: 'PENDING',
-      createdAt: new Date().toISOString(),
-    };
+    const targetSugar = customizingProduct.station === 'BAR' ? sugarLevel : undefined;
+    const targetIce = customizingProduct.station === 'BAR' ? iceLevel : undefined;
+    const targetNote = itemNote.trim() ? itemNote.trim() : undefined;
 
-    setCart((prev) => [...prev, newItem]);
+    setCart((prev) => {
+      // Find if an identical item is already in cart
+      const existingIdx = prev.findIndex((it) => {
+        if (it.productId !== customizingProduct.id) return false;
+        if ((it.selectedSize?.name || '') !== (selectedSize?.name || '')) return false;
+        if ((it.selectedCookingMethod?.name || '') !== (selectedMethod?.name || '')) return false;
+        if ((it.sugarLevel || '') !== (targetSugar || '')) return false;
+        if ((it.iceLevel || '') !== (targetIce || '')) return false;
+        if ((it.note || '') !== (targetNote || '')) return false;
+
+        const itTops = (it.selectedToppings || []).map((t) => `${t.id}:${t.quantity}`).sort().join(',');
+        const curTops = selectedToppings.map((t) => `${t.id}:${t.quantity}`).sort().join(',');
+        return itTops === curTops;
+      });
+
+      if (existingIdx >= 0) {
+        const next = [...prev];
+        next[existingIdx] = {
+          ...next[existingIdx],
+          quantity: next[existingIdx].quantity + itemQty,
+        };
+        return next;
+      }
+
+      const newItem: OrderItem = {
+        id: 'cust-item-' + Date.now() + Math.random().toString(36).substring(2, 5),
+        productId: customizingProduct.id,
+        productName: customizingProduct.name,
+        unitPrice,
+        quantity: itemQty,
+        station: customizingProduct.station,
+        selectedCookingMethod: selectedMethod,
+        selectedSize,
+        selectedToppings,
+        sugarLevel: targetSugar,
+        iceLevel: targetIce,
+        note: targetNote,
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+      };
+
+      return [...prev, newItem];
+    });
+
     setCustomizingProduct(null);
   };
 
@@ -132,17 +165,24 @@ export const CustomerSelfOrderModal: React.FC<CustomerSelfOrderModalProps> = ({
   const cartSubtotal = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  const handleSubmitOrder = () => {
-    if (cart.length === 0) return;
-    const { order } = submitCustomerSelfOrder(
-      table.id,
-      cart,
-      guestName.trim() || undefined,
-      customerNote.trim() || undefined
-    );
-    setSubmittedOrderCode(order.orderCode);
-    setIsSuccess(true);
-    setCart([]);
+  const handleSubmitOrder = async () => {
+    if (cart.length === 0 || isSubmittingOrder) return;
+    setIsSubmittingOrder(true);
+    try {
+      const { order } = await submitCustomerSelfOrder(
+        table.id,
+        cart,
+        guestName.trim() || undefined,
+        customerNote.trim() || undefined
+      );
+      setSubmittedOrderCode(order.orderCode);
+      setIsSuccess(true);
+      setCart([]);
+    } catch (err: any) {
+      alert(err?.message || 'Có lỗi khi gửi đơn hàng');
+    } finally {
+      setIsSubmittingOrder(false);
+    }
   };
 
   return (
@@ -165,13 +205,16 @@ export const CustomerSelfOrderModal: React.FC<CustomerSelfOrderModalProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {!isStandalone && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
+              title="Đóng"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         {/* Success Screen State */}
@@ -207,7 +250,7 @@ export const CustomerSelfOrderModal: React.FC<CustomerSelfOrderModalProps> = ({
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-              🔔 Quầy thu ngân đã nhận được thông báo và đang tiến hành phục vụ món cho bạn. Xin vui lòng đợi trong giây lát!
+              🔔 Quầy thu ngân & pha chế đã nhận được thông báo và đang tiến hành phục vụ món cho bạn. Xin vui lòng đợi trong giây lát!
             </p>
 
             <div className="pt-4 w-full flex flex-col gap-2">
@@ -218,13 +261,15 @@ export const CustomerSelfOrderModal: React.FC<CustomerSelfOrderModalProps> = ({
               >
                 Gọi Thêm Món Khác
               </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="w-full py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 font-bold text-xs hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-              >
-                Hoàn Tất & Thoát
-              </button>
+              {!isStandalone && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 font-bold text-xs hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                >
+                  Hoàn Tất & Thoát
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -373,12 +418,15 @@ export const CustomerSelfOrderModal: React.FC<CustomerSelfOrderModalProps> = ({
                 {/* Submit button */}
                 <button
                   type="button"
+                  disabled={isSubmittingOrder || cart.length === 0}
                   onClick={handleSubmitOrder}
-                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black text-sm flex items-center justify-between px-4 shadow-lg shadow-amber-500/20 transition active:scale-[0.98]"
+                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 disabled:opacity-50 text-slate-950 font-black text-sm flex items-center justify-between px-4 shadow-lg shadow-amber-500/20 transition active:scale-[0.98] cursor-pointer disabled:cursor-not-allowed"
                 >
                   <div className="flex items-center gap-2">
                     <ShoppingBag className="w-4 h-4" />
-                    <span>Xác Nhận Gọi Món ({cartItemCount})</span>
+                    <span>
+                      {isSubmittingOrder ? 'Đang gửi đơn hàng...' : `Xác Nhận Gọi Món (${cartItemCount})`}
+                    </span>
                   </div>
                   <span className="font-mono text-base">{cartSubtotal.toLocaleString('vi-VN')}đ</span>
                 </button>

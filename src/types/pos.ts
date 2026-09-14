@@ -4,6 +4,8 @@ export type SalaryCalculationType = 'HOURLY' | 'MONTHLY' | 'COMBINED';
 
 export interface User {
   id: string;
+  username?: string; // Tên đăng nhập
+  password?: string; // Mật khẩu
   name: string;
   phone: string;
   role: UserRole;
@@ -227,6 +229,7 @@ export interface StoreSettings {
   address: string;
   phone: string;
   ownerName: string;
+  bankCode?: string; // VietQR Bank Code e.g. STB, VCB, MB, TCB, ACB, etc.
   bankName: string;
   bankAccount: string;
   accountHolder: string;
@@ -239,8 +242,11 @@ export interface StoreSettings {
   qrImageUrl?: string;
   defaultShippingFee?: number;
   hideSupabaseOnSidebar?: boolean;
+  autoPrintOnPayment?: boolean;
+  bankApiKey?: string;
+  enableAutoBankConfirmation?: boolean;
 }
 
-export type TabType = 'pos' | 'delivery' | 'kds' | 'hrm' | 'menu' | 'reports' | 'archive';
+export type TabType = 'pos' | 'delivery' | 'kds' | 'hrm' | 'menu' | 'reports' | 'users' | 'archive';
 
 export type LayoutMode = 'SIDEBAR_DASHBOARD' | 'TOPBAR_KIOSK';

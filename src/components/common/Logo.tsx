@@ -56,19 +56,19 @@ export const Logo: React.FC<LogoProps> = ({
         <div className="flex flex-col">
           <div className="flex items-center gap-2">
             <span
-              className={`${textClasses[size]} font-black tracking-wider text-slate-900 dark:text-white uppercase font-sans`}
+              className={`${textClasses[size]} font-black tracking-tight text-white dark:text-[#FFFDF9] uppercase font-sans drop-shadow-xs`}
             >
-              KAME
+              Kame-Tea
             </span>
-            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-900 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800 uppercase tracking-wider">
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-black bg-[#8D5B4C] text-white border border-[#A86F5D] uppercase tracking-wider shadow-xs">
               POS
             </span>
           </div>
           {showSubtitle && (
-            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-              <span>Vị trà đậm đà chuẩn gu</span>
-              <span className="text-amber-500 font-bold">•</span>
-              <span className="text-amber-700 dark:text-amber-400 font-semibold">Ốc & Ăn Vặt</span>
+            <div className="flex items-center gap-1.5 text-[11px] text-[#EFE4D6] dark:text-[#EFE4D6] font-medium mt-0.5">
+              <span className="text-[#FCEEE3] font-semibold">Trà Sữa Chuẩn Vị</span>
+              <span className="text-[#C48B5E] font-bold">•</span>
+              <span className="text-[#FFE6D5] font-bold">Ốc & Ăn Vặt</span>
             </div>
           )}
         </div>
