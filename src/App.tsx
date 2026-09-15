@@ -15,16 +15,21 @@ import { CustomerSelfOrderModal } from './components/pos/CustomerSelfOrderModal'
 import { SupabaseIntegrationModal } from './components/common/SupabaseIntegrationModal';
 import { QRNotificationToast } from './components/pos/QRNotificationToast';
 import { GlobalToast } from './components/common/GlobalToast';
-import { TableItem } from './types/pos';
+import { PaymentSuccessModal } from './components/pos/PaymentSuccessModal';
+import { CupLabelModal } from './components/pos/CupLabelModal';
+import { ThermalReceipt } from './components/pos/ThermalReceipt';
+import { TableItem, Order } from './types/pos';
 
 const POSContent: React.FC = () => {
-  const { currentTab, activeTable, setActiveTable, tables, isAuthenticated, isAdmin } = usePOS();
+  const { currentTab, activeTable, setActiveTable, tables, isAuthenticated, isAdmin, settings } = usePOS();
 
   // Active modals
   const [checkoutTable, setCheckoutTable] = useState<TableItem | null>(null);
   const [splitMergeTable, setSplitMergeTable] = useState<TableItem | null>(null);
   const [showSupabaseModal, setShowSupabaseModal] = useState<boolean>(false);
   const [customerOrderTable, setCustomerOrderTable] = useState<TableItem | null>(null);
+  const [paymentSuccessOrder, setPaymentSuccessOrder] = useState<Order | null>(null);
+  const [cupLabelSuccessOrder, setCupLabelSuccessOrder] = useState<Order | null>(null);
 
   // Parse QR Code Self-Order directly from URL (hash or search query)
   useEffect(() => {
@@ -152,10 +157,65 @@ const POSContent: React.FC = () => {
         <BillCheckoutModal
           table={checkoutTable}
           onClose={() => setCheckoutTable(null)}
-          onPaymentDone={() => {
+          onPaymentDone={(paidOrder) => {
             setCheckoutTable(null);
             setActiveTable(null);
+            if (paidOrder) {
+              setPaymentSuccessOrder(paidOrder);
+            }
           }}
+        />
+      )}
+
+      {/* PAYMENT SUCCESS CELEBRATION MODAL */}
+      {paymentSuccessOrder && (
+        <>
+          <PaymentSuccessModal
+            order={paymentSuccessOrder}
+            onClose={() => setPaymentSuccessOrder(null)}
+            onPrintReceipt={() => {
+              window.print();
+            }}
+            onPrintCupLabels={() => {
+              setCupLabelSuccessOrder(paymentSuccessOrder);
+            }}
+          />
+          {/* Thermal Receipt for printing */}
+          <ThermalReceipt
+            order={paymentSuccessOrder}
+            table={
+              tables.find((t) => t.id === paymentSuccessOrder.tableId) || {
+                id: paymentSuccessOrder.tableId,
+                name: paymentSuccessOrder.tableName,
+                code: paymentSuccessOrder.tableName,
+                zone: 'Chung',
+                capacity: 4,
+                status: 'EMPTY',
+              }
+            }
+            activeUser={null}
+            settings={settings}
+            subtotal={paymentSuccessOrder.subtotal || paymentSuccessOrder.totalAmount}
+            discountAmount={paymentSuccessOrder.discountAmount || 0}
+            discountPercent={paymentSuccessOrder.discountPercent || 0}
+            shippingFee={paymentSuccessOrder.shippingFee || 0}
+            taxAmount={paymentSuccessOrder.taxAmount || 0}
+            totalPayable={paymentSuccessOrder.finalTotal || paymentSuccessOrder.totalAmount}
+            paymentMethod={paymentSuccessOrder.paymentMethod}
+            cashGiven={paymentSuccessOrder.cashAmountPaid || paymentSuccessOrder.totalAmount}
+            changeReturn={0}
+            cashAmountPaid={paymentSuccessOrder.cashAmountPaid || 0}
+            transferAmountPaid={paymentSuccessOrder.transferAmountPaid || 0}
+            isPreview={false}
+          />
+        </>
+      )}
+
+      {/* Cup Sticker Label Modal */}
+      {cupLabelSuccessOrder && (
+        <CupLabelModal
+          order={cupLabelSuccessOrder}
+          onClose={() => setCupLabelSuccessOrder(null)}
         />
       )}
 

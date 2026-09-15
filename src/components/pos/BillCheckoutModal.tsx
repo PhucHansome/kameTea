@@ -32,7 +32,7 @@ import {
 interface BillCheckoutModalProps {
   table: TableItem;
   onClose: () => void;
-  onPaymentDone: () => void;
+  onPaymentDone: (paidOrder?: any) => void;
 }
 
 export const BillCheckoutModal: React.FC<BillCheckoutModalProps> = ({
@@ -168,7 +168,23 @@ export const BillCheckoutModal: React.FC<BillCheckoutModalProps> = ({
           executePrintReceipt({ delayMs: 250 });
         }
 
-        onPaymentDone();
+        const completedOrder = {
+          ...activeOrder,
+          status: 'PAID' as const,
+          paymentMethod,
+          discountPercent,
+          discountAmount,
+          taxAmount,
+          shippingFee: currentShipping,
+          totalAmount: totalPayable,
+          finalTotal: totalPayable,
+          cashAmountPaid,
+          transferAmountPaid,
+          paidAt: new Date().toISOString(),
+        };
+
+        setShowPrintPreview(false);
+        onPaymentDone(completedOrder);
       }
     } finally {
       setIsSubmittingCheckout(false);
@@ -244,11 +260,23 @@ export const BillCheckoutModal: React.FC<BillCheckoutModalProps> = ({
             executePrintReceipt({ delayMs: 350 });
           }
 
-          setTimeout(() => {
-            if (isMounted) {
-              onPaymentDone();
-            }
-          }, 1200);
+          const completedOrder = {
+            ...activeOrder,
+            status: 'PAID' as const,
+            paymentMethod,
+            discountPercent,
+            discountAmount,
+            taxAmount,
+            shippingFee: currentShipping,
+            totalAmount: totalPayable,
+            finalTotal: totalPayable,
+            cashAmountPaid,
+            transferAmountPaid: targetAmount,
+            paidAt: new Date().toISOString(),
+          };
+
+          setShowPrintPreview(false);
+          onPaymentDone(completedOrder);
         } else {
           setIsSubmittingCheckout(false);
           isCompletedRef.current = false;

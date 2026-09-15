@@ -44,7 +44,7 @@ export const TableGrid: React.FC<TableGridProps> = ({
   onOpenSplitMerge,
   onOpenCheckout,
 }) => {
-  const { tables, orders, zones: availableZones, isAdmin, addTable } = usePOS();
+  const { tables, orders, zones: availableZones, isAdmin, addTable, resetTableToEmpty } = usePOS();
   const [activeZone, setActiveZone] = useState<string>('TẤT CẢ');
   const [tableSearchQuery, setTableSearchQuery] = useState<string>('');
   const [qrModalTable, setQrModalTable] = useState<TableItem | null>(null);
@@ -67,10 +67,24 @@ export const TableGrid: React.FC<TableGridProps> = ({
     return true;
   });
 
-  // Status stats
-  const emptyCount = tables.filter((t) => t.status === 'EMPTY').length;
-  const occupiedCount = tables.filter((t) => t.status === 'OCCUPIED').length;
-  const waitingPaymentCount = tables.filter((t) => t.status === 'WAITING_PAYMENT').length;
+  // Status stats - accurately calculate based on real active orders
+  const occupiedCount = tables.filter((t) => {
+    if (t.status !== 'OCCUPIED') return false;
+    const ord = orders.find(
+      (o) => o.tableId === t.id && (o.status === 'ACTIVE' || o.status === 'PENDING_PAYMENT')
+    );
+    return !!ord && ord.items.some((it) => it.status !== 'CANCELLED');
+  }).length;
+
+  const waitingPaymentCount = tables.filter((t) => {
+    if (t.status !== 'WAITING_PAYMENT') return false;
+    const ord = orders.find(
+      (o) => o.tableId === t.id && (o.status === 'ACTIVE' || o.status === 'PENDING_PAYMENT')
+    );
+    return !!ord && ord.items.some((it) => it.status !== 'CANCELLED');
+  }).length;
+
+  const emptyCount = Math.max(0, tables.length - occupiedCount - waitingPaymentCount);
 
   // Active delivery / takeaway orders
   const activeDeliveryOrders = orders.filter(
@@ -411,8 +425,11 @@ export const TableGrid: React.FC<TableGridProps> = ({
             const tableTotal = activeOrder ? activeOrder.totalAmount : 0;
             const elapsedTime = getElapsedTime(table.openedAt);
 
+            // A table is rendered as OCCUPIED or WAITING only if it has a real active order with items
+            const isTrulyOccupied = (isOccupied || isWaiting) && !!activeOrder && itemsCount > 0;
+
             // OCCUPIED OR WAITING PAYMENT TABLE
-            if (isOccupied || isWaiting) {
+            if (isTrulyOccupied) {
               return (
                 <div
                   key={table.id}

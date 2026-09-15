@@ -206,6 +206,7 @@ interface POSContextType {
   // Sound and notifications
   notifyKitchenUpdate: () => void;
   resetAllToDefault: () => void;
+  resetTableToEmpty: (tableId: string) => Promise<void>;
 
   // Supabase Cloud Sync & Real-time Persistence
   syncToSupabase: () => Promise<SyncResult>;
@@ -558,6 +559,41 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (isCustomerQRMode()) return;
     localStorage.setItem('kame_pos_layout_mode', layoutMode);
   }, [layoutMode]);
+
+  // Auto-heal tables: If any table is marked OCCUPIED or WAITING_PAYMENT, but there is NO active/pending order for it,
+  // automatically heal it back to EMPTY so users never see a phantom "0đ, 0 món" green table!
+  useEffect(() => {
+    if (isCustomerQRMode()) return;
+    setTables((prevTables) => {
+      let changed = false;
+      const updated = prevTables.map((t) => {
+        if (t.status === 'OCCUPIED' || t.status === 'WAITING_PAYMENT') {
+          const hasActiveOrder = orders.some(
+            (o) =>
+              o.tableId === t.id &&
+              (o.status === 'ACTIVE' || o.status === 'PENDING_PAYMENT') &&
+              o.items.some((it) => it.status !== 'CANCELLED')
+          );
+          if (!hasActiveOrder) {
+            changed = true;
+            return {
+              ...t,
+              status: 'EMPTY' as const,
+              currentOrderId: undefined,
+              openedAt: undefined,
+              guestCount: undefined,
+            };
+          }
+        }
+        return t;
+      });
+      if (changed) {
+        localStorage.setItem('kame_pos_tables', JSON.stringify(updated));
+        return updated;
+      }
+      return prevTables;
+    });
+  }, [orders]);
 
   // Compress Old Sales Data to Daily Sales Summary
   const compressOldSalesData = useCallback(
@@ -1553,69 +1589,81 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setIsSubmitting(true);
-    let capturedOrder: Order | null = null;
-    let tableIdToFree: string | null = null;
 
     try {
       const paidAt = new Date().toISOString();
 
-      // 1. Functional state update prevents stale closure and guarantees atomicity
-      setOrders((prevOrders) => {
-        const target = prevOrders.find((o) => o.id === orderId);
-        if (!target) return prevOrders;
+      // Find the target order synchronously from state or local storage to avoid async state closure issues
+      let target = orders.find((o) => o.id === orderId);
+      if (!target) {
+        try {
+          const raw = localStorage.getItem('kame_pos_orders');
+          if (raw) {
+            const parsed: Order[] = JSON.parse(raw);
+            target = parsed.find((o) => o.id === orderId);
+          }
+        } catch {
+          // ignore
+        }
+      }
 
-        // Calculate settlement via pure function (zero floating-point error, full edge case coverage)
-        const breakdown = calculateSettlement({
-          subtotal: target.subtotal,
-          discountPercent,
-          taxPercent,
-          shippingFee: target.shippingFee || 0,
-          paymentMethod,
-          paymentDetails,
-        });
-
-        tableIdToFree = target.tableId;
-
-        const finalizedOrder: Order = {
-          ...target,
-          status: 'PAID',
-          paymentMethod,
-          discountPercent,
-          discountAmount: breakdown.discountAmount,
-          taxAmount: breakdown.taxAmount,
-          shippingFee: breakdown.shippingFee,
-          totalAmount: breakdown.totalAmount,
-          finalTotal: breakdown.totalAmount,
-          cashAmountPaid: breakdown.cashAmountPaid,
-          transferAmountPaid: breakdown.transferAmountPaid,
-          paidAt,
-          updatedAt: paidAt,
-        };
-
-        capturedOrder = finalizedOrder;
-        return prevOrders.map((o) => (o.id === orderId ? finalizedOrder : o));
-      });
-
-      if (!capturedOrder) {
+      if (!target) {
         showToast('error', 'Lỗi thanh toán', 'Không tìm thấy thông tin đơn hàng cần thanh toán.');
         return false;
       }
 
-      // 2. Safely free table without mutating outside state
+      // Calculate settlement via pure function (zero floating-point error, full edge case coverage)
+      const breakdown = calculateSettlement({
+        subtotal: target.subtotal,
+        discountPercent,
+        taxPercent,
+        shippingFee: target.shippingFee || 0,
+        paymentMethod,
+        paymentDetails,
+      });
+
+      const tableIdToFree = target.tableId;
+
+      const finalizedOrder: Order = {
+        ...target,
+        status: 'PAID',
+        paymentMethod,
+        discountPercent,
+        discountAmount: breakdown.discountAmount,
+        taxAmount: breakdown.taxAmount,
+        shippingFee: breakdown.shippingFee,
+        totalAmount: breakdown.totalAmount,
+        finalTotal: breakdown.totalAmount,
+        cashAmountPaid: breakdown.cashAmountPaid,
+        transferAmountPaid: breakdown.transferAmountPaid,
+        paidAt,
+        updatedAt: paidAt,
+      };
+
+      // 1. Update orders state and persist to localStorage
+      setOrders((prevOrders) => {
+        const updated = prevOrders.map((o) => (o.id === orderId ? finalizedOrder : o));
+        localStorage.setItem('kame_pos_orders', JSON.stringify(updated));
+        return updated;
+      });
+
+      // 2. Safely free table immediately and persist to localStorage
       if (tableIdToFree) {
-        setTables((prevTables) =>
-          prevTables.map((t) =>
+        setTables((prevTables) => {
+          const updated = prevTables.map((t) =>
             t.id === tableIdToFree
               ? {
                   ...t,
-                  status: 'EMPTY',
+                  status: 'EMPTY' as const,
                   currentOrderId: undefined,
                   openedAt: undefined,
                   guestCount: undefined,
                 }
               : t
-          )
-        );
+          );
+          localStorage.setItem('kame_pos_tables', JSON.stringify(updated));
+          return updated;
+        });
       }
 
       // 3. Play success audio feedback
@@ -1624,7 +1672,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       // 4. Asynchronously persist to Supabase cloud
-      const orderToSave = capturedOrder as Order;
+      const orderToSave = finalizedOrder;
       try {
         const res = await dbUpdate(
           'pos_orders',
@@ -1679,6 +1727,33 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const resetTableToEmpty = async (tableId: string) => {
+    setTables((prev) => {
+      const updated = prev.map((t) =>
+        t.id === tableId
+          ? {
+              ...t,
+              status: 'EMPTY' as const,
+              currentOrderId: undefined,
+              openedAt: undefined,
+              guestCount: undefined,
+            }
+          : t
+      );
+      localStorage.setItem('kame_pos_tables', JSON.stringify(updated));
+      return updated;
+    });
+
+    // Also cancel or clean up any uncompleted orders referencing this table
+    setOrders((prev) => {
+      const updated = prev.filter((o) => o.tableId !== tableId || o.status === 'PAID');
+      localStorage.setItem('kame_pos_orders', JSON.stringify(updated));
+      return updated;
+    });
+
+    showToast('info', 'Đã làm trống bàn', 'Bàn đã được chuyển về trạng thái sẵn sàng đón khách.');
   };
 
   const splitTable = async (
@@ -2629,6 +2704,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         notifyKitchenUpdate,
         resetAllToDefault,
+        resetTableToEmpty,
 
         syncToSupabase,
         syncFromSupabase,
