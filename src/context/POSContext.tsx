@@ -36,6 +36,7 @@ import {
   INITIAL_EXPENSES,
 } from '../data/initialData';
 import { playBellSound, playSuccessSound } from '../utils/audio';
+import { ERROR_CATALOG, ErrorCode, formatErrorMessage } from '../shared/errorCatalog';
 import {
   pushAllDataToSupabase,
   pullAllDataFromSupabase,
@@ -474,7 +475,18 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current);
     }
-    setToastNotification({ type, title, message });
+    let formattedMessage = message;
+    if (type === 'error' && !message.trim().startsWith('[')) {
+      const match = Object.entries(ERROR_CATALOG).find(
+        ([, item]) => item.template.toLowerCase() === message.trim().toLowerCase()
+      );
+      if (match) {
+        formattedMessage = `[${match[0]}] ${message}`;
+      } else {
+        formattedMessage = `[ME00020] ${message}`;
+      }
+    }
+    setToastNotification({ type, title, message: formattedMessage });
     toastTimeoutRef.current = setTimeout(() => {
       setToastNotification(null);
     }, 4500);
